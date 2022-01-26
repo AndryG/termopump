@@ -1,0 +1,3 @@
+[submodule "ss.lib"]
+	path = ss.lib
+	url = https://github.com/AndryG/avr-ss.git
