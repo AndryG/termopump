@@ -138,7 +138,7 @@
     <OutputFileName>termopump</OutputFileName>
     <OutputFileExtension>.elf</OutputFileExtension>
     <OutputType>Executable</OutputType>
-    <PostBuildEvent>$(ToolchainDir)\avr-objcopy -I ihex $(OutputDirectory)\$(OutputFileName).eep -O binary $(OutputDirectory)\$(OutputFileName).eep.bin</PostBuildEvent>
+    <PostBuildEvent>"$(ToolchainDir)\avr-objcopy" -I ihex $(OutputDirectory)\$(OutputFileName).eep -O binary $(OutputDirectory)\$(OutputFileName).eep.bin</PostBuildEvent>
   </PropertyGroup>
   <ItemGroup>
     <None Include="1wire.c">

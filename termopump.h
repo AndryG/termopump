@@ -15,6 +15,7 @@
 #include <util/delay.h>
 #include <avr/eeprom.h>
 #include <avr/builtins.h>
+#include <avr/wdt.h>
 
 
 #define QT_TASK_COUNT 5
