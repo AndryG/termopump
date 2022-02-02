@@ -5,16 +5,13 @@ char led[sizeof(ledZ)] = {S7_SPACE, S7_MINUS, S7_SPACE};
 
 char buf[12];
 
-// нажатые кнопки
-u8 btn;
-
 struct conf_s {
   struct confWf{
     u8 wf; // сценарий работы при загрузке
   } wf;
   struct confTr{
     i16 t; // температурная уставка
-    u8 dt; // гистерезис температуры в десятых градуса
+    i8 dt; // гистерезис температуры /-12.0 - 12.0/ в десятых градуса >0 режим охлаждения, <0 режим нагревателя
   } tr;
   struct confSt{
     u8 power;  // 0-1 состояние реле при включении
@@ -22,7 +19,7 @@ struct conf_s {
   u8 crc; // для контроля данных в ееп
 };
 
-#define CONF_DEFAULT {WF_NONE}, {9, 10}, {0}
+#define CONF_DEFAULT {WF_TERMO}, {9, 10}, {}
 
 // рабочий сценарий
 u8 workFlow;
@@ -36,64 +33,101 @@ u8 workFlow;
 struct conf_s const PROGMEM conf_p = {CONF_DEFAULT};
 
 // структура настроек в eep
-struct conf_s EEMEM conf_e = {CONF_DEFAULT, 168};
+struct conf_s EEMEM conf_e = {CONF_DEFAULT, 166};
 
 struct conf_s conf;
 
+i16 dsValue;
 
-i16 dsReadValue;
+u8 dsErr = 9; // 0 - ок, 9 нет измерений
+
+// нажатые кнопки
+u8 btn;
 
 //u8 dsData[10];
 
 //u8 dsCRC;
 
-void tLedAndKey();
+void main(void) __attribute__((noreturn));
+u8 tLedAndKey();
 void mcuInit();
-uint8_t ds18b20Reader(u8 state);
+void tDSRead();
+//uint8_t ds18b20Reader(u8 state);
 void reset();
 void saveConf();
 bool loadConf();
 
+/*
+ Рабочий автомат режима TERMO
+ Релейное управление с гистерезисом.
+ Знак гистерезиса назначает режим работы (нагрев/охлаждение), указывает направления изм. температуры градусника при отк. печке/холодильнике.
+ Отрицательный гистерезис для нагревателя, положительный - охладителя.
+ Указывается в десятых градуса. Расчеты все ведутся в десятых градуса
+ */
+void a3TermoCore(){
+  i16 T = conf.tr.t * 10;
+  i8 dt =  conf.tr.dt;
+  if(0 == dt){
+    // error
+  }else{
+    if((dt < 0) == (dsValue > T)){
+      iopLow(RELAY_PORT, bv(RELAY_BIT));
+    }
+    if((dt < 0) == (dsValue <= T + dt)){
+      iopHigh(RELAY_PORT, bv(RELAY_BIT));
+    }
+  }
+}
 
-
-void a1(){
+void a2(){
   static u8 state = 0;
-  static u16 restoreCounter = 0;
+  static u16 restoreCounter = 0; // счетчик восстановления - переход в нулевое состояние
+
   u8 newState = state;
-  if(restoreCounter && !(--restoreCounter)){ // досчитали до нуля
+  if(restoreCounter && !(--restoreCounter)){ // досчитали тики до нуля и сбрасываем на нулевое состояние
     newState = 0;
+  }else{
+    switch(state){
+      case 0: // показ t (def mode)
+        //TODO добавить проверка наличия ошибок для отображения
+        s7Str2fixPoint(itoa16(dsValue, buf), led, 3, 1);
+        if(btn & BTN_SET){
+          newState++;
+        }
+        a3TermoCore();
+        break;
+      case 1: // показ T (уставки)
+        if(btn & BTN_SET){
+          newState++;
+        }
+        break;
+      case 2: // изменение T (уставки)
+        if(btn & BTN_SET){    // 1248
+          restoreCounter = 1;
+        }
+        if(btn & (BTN_MINUS | BTN_PLUS)){
+          i16 t = conf.tr.t;
+          t += (btn & BTN_PLUS) ? 1 : -1;
+          #define T_MAX 27
+          #define T_MIN 0
+          if(t > T_MAX){ t = T_MAX;}
+          if(t < T_MIN){ t = T_MIN;}
+          conf.tr.t = t;
+          s7Str2fixPoint(itoa16(t, buf), &led[1], 2, 0);
+          restoreCounter = TICK_SEC(5);
+        }
+        break;
+    }
   }
-  switch(state){
-    case 0: // показ t (def mode)
-      //TODO добавить проверка наличия ошибок для отображения
-      s7Str2fixPoint(itoa16(dsReadValue, buf), led, 3, 1);
-      if(btn & BTN_SET){
-        newState++;
-      }
-      break;
-    case 1: // показ T
-      if(btn & BTN_SET){
-        newState++;
-      }
-      break;
-    case 2: // изменение T
-      if(btn & BTN_SET){
-        newState++;
-      }
-      if(btn & (BTN_MINUS | BTN_PLUS)){
-        i16 t = conf.tr.t;
-        #define T_MAX 270
-        #define T_MIN 0
-        t += (btn & BTN_PLUS) ? 10 : -10;
-        if(t > T_MAX){ t = T_MAX;}
-        if(t < T_MIN){ t = T_MIN;}
-        restoreCounter = TICK_SEC(3);
-      }
-      break;
-  }
+
   if(state != newState){ // вход в новое состояние
     switch(newState){
-      case 1:
+      case 0:
+        if(2 == state){ // сохранение conf при выходе из "изменение T (уставки)"
+          saveConf();
+        }
+      case 1: // вход в состояние "показ T (уставки)"
+      case 2:
         led[0] = S7_t;
         s7Str2fixPoint(itoa16(conf.tr.t, buf), &led[1], 2, 0);
         restoreCounter = TICK_SEC(3);
@@ -103,8 +137,9 @@ void a1(){
         break;
     }
   }
-
+  state = newState;
 }
+
 
 /*
   Автомат начальной загрузки, загрузки и смены workflow - рабочего процесса
@@ -114,28 +149,27 @@ void a1(){
   return false - работа автомата, запускать дальше работу еще нельзя
  */
 bool a0Boot(){
-  static u8 a0State = 2;
+  static u8 state = 2;
   static u8 a0Tick = sizeof(ledZ) + 200; // показать весь индикатор, кнопки + запас
 
   if(a0Tick && --a0Tick){ // идет задержка
     return false;
   }
 
-  if(0 == a0State){
+  if(0 == state){
     return true;
   }
 
-  if(1 == a0State){
+  if(1 == state){
     if(0 == (btn & 0xf0)){ // кнопки уже отпущены - уходим на резет
       reset();
     }
-  }else if(2 == a0State){
+  }else if(2 == state){
     loadConf();
-    led[0] = S7_F;
     u8 wf;
-    u8 b = btn & 0xf0;
+    u8 b = btn & 0xf0; // удерживаемые при перезагрузке кнопки
     if(b){
-      if(b == BTN_MINUS << 4){ // удерживаемые при перезагрузке кнопки
+      if(b == BTN_MINUS << 4){
         wf = WF_STABLE;
       }else if(b == BTN_PLUS << 4){
         wf = WF_TERMO;
@@ -144,32 +178,19 @@ bool a0Boot(){
       }
       conf.wf.wf = wf; // сохраняем workflow в conf, обновляем заставку и идем ждать отпускания кнопок
       saveConf();
-      a0State = 1;
+   //   s7Str2fixPoint(itoa16(conf.crc, buf), &led[0], 3, 0);
+      state = 1;
     }else{
-      a0State = 0;
+      state = 0;
     }
     a0Tick = TICK_SEC(1);
+    led[0] = S7_F;
     led[1] = pgm_read_byte(&S7[conf.wf.wf]);
   }
   return false;
 }
 
-//    u8 tickDsRead = 1;
- //      u8 dsReadState = 1; //
-
-//void aDsRead(){    //1030
-  //
-            //if(tickDsRead && !(--tickDsRead)){ // опрос термодатчика. Для запуска нужно установить время до опроса 0 - выключено
-              //tickDsRead = 25; // 1 сек
-              //PORTD ^= bv(PD6);
-              //if((dsReadState = ds18b20Reader(dsReadState))){
-                //s7Str2fixPoint(itoa16(dsReadValue, buf), led, sizeof(ledZ), 1);
-                //}else{ // первая часть выполнена успешно
-                //tickDsRead = TICK_SEC(1);  // самопрограммируемся на вторую
-              //}
-            //}
-//}
-int main(void)
+void main(void)
 {
 
   mcuInit();
@@ -177,32 +198,24 @@ int main(void)
   led[1] = S7_MINUS;
   led[2] = S7_SPACE;
 
-  u8 dsReadState  = 0; // Состояние читалки температуры. Не ноль запускает команду преобразования (чтобы не читать позорные "85")
-  u8 tickDsRead   = 0;
-  u16 tickBlink   = 1;
+//  u16 dsTick  = 1;
+//  u8 dsState  = 0; // Состояние читалки температуры. Не ноль запускает команду преобразования (чтобы не читать позорные "85")
+  u16 tickBlink   = 0;
   u8 blinkCnt     = 0;
 
   while (1)
   {
     if(TIFR & (1<<TOV0)){ // tick
 
-
       TIFR = (1<<TOV0);
       TCNT0 = 0xff + 1 - F_CPU / 256 / F_TICK; // 0x64
 
-      tLedAndKey();
-
-      if(tickDsRead && !(--tickDsRead)){ // опрос термодатчика. Для запуска нужно установить время до опроса 0 - выключено
-        if((dsReadState = ds18b20Reader(dsReadState))){
-          s7Str2fixPoint(itoa16(dsReadValue, buf), led, sizeof(ledZ), 1);
-        }else{ // первая часть выполнена успешно
-          tickDsRead = TICK_SEC(1);  // самопрограммируемся на второй вызов после преобразования
-        }
-      }
+      tDSRead();
+      btn = tbtnProcess(tLedAndKey()); // ПРОСЛЕДИТЬ, чтобы биты были в начале байта (подвинуть)
 
       if(a0Boot()){
         switch(conf.wf.wf){
-        //  case WF_TERMO: a1(); break;
+          case WF_TERMO: a2(); break;
         }
       }
 
@@ -234,8 +247,8 @@ void mcuInit(){
 }
 
 /* динамическая индикация + сканироание кнопок 10мс */
-void tLedAndKey(){
-  static u8 ledCnt = 0;
+u8 tLedAndKey(){
+  static u8 ledIndex = 0;
 
   // выкл все разряды
   iopHigh(LED_Z_PORT, LED_Z_MASK);
@@ -244,32 +257,45 @@ void tLedAndKey(){
   iopInputP(LED_SEG_PORT, LED_BT_PIN_MASK); // линии чтения на вход
   iopOutputLow(LED_SEG_PORT, LED_BT_COMMON_MASK); // заземляем кнопки
   _delay_us(5); // сам не знаю зачем. Чтобы электроны добежали, куда надо )))
-  btn = tbtnProcess(0x08 | (LED_BT_PIN_MASK & (iopPin(LED_SEG_PORT)))); // ПРОСЛЕДИТЬ, чтобы биты были в начале байта (подвинуть)
+  u8 b = 0x08 | (LED_BT_PIN_MASK & (iopPin(LED_SEG_PORT)));
 
-  if(++ledCnt > sizeof(ledZ) - 1){
-    ledCnt = 0;
+  if(++ledIndex > sizeof(ledZ) - 1){
+    ledIndex = 0;
   }
 
   // зажигаем следующий разряд  SEG-low, Z-high
   iopOutputLow(LED_SEG_PORT, 0xff);
-  iopSet(LED_SEG_PORT, ~led[ledCnt]);
-  iopLow(LED_Z_PORT, pgm_read_byte(&ledZ[ledCnt]));
+  iopSet(LED_SEG_PORT, ~led[ledIndex]);
+  iopLow(LED_Z_PORT, pgm_read_byte(&ledZ[ledIndex]));
+  return b;
 }
 
-uint8_t ds18b20Reader(u8 state){
-  u8 err = w1Reset();
-  if(err){
-    return 10 + err;
-  }
-  if(state){ // были результаты (ошибка или данные) - начнем новый цикл
-    w1rw(0xCC); //SKIP ROM [CCh]
-    w1rw(0x44); //CONVERT  [44h]
-    return 0;
-  }else{ // прошлый запуск вернул ноль, значит читаем данные
-    w1rw(0xCC);//SKIP ROM [CCh]
-    w1rw(0xBE);//READ SCRATCHPAD [BEh]
-    *((u8*)&dsReadValue) = w1rw(0xff);
-    *((u8*)&dsReadValue+1) = w1rw(0xff);
+/*
+  чтение температуры
+  return ошибка чтения: 0 - окб; 1 - no present; 2 - замыкание
+*/
+void tDSRead(){
+  static u8 state = 0;
+  static u16 tick = 1;
+  u8 err;
+
+  if(tick && !(--tick)){
+    err = w1Reset();
+    if(err){
+      dsErr = err;
+      tick = TICK_SEC(3);
+      return;
+    }
+    if(0 == state){ // запрос на преобразование и ждем
+      w1rw(0xCC); //SKIP ROM [CCh]
+      w1rw(0x44); //CONVERT  [44h]
+      state++;
+      tick = TICK_SEC(1);
+    }else{ // 1 чтение и ожидание
+      w1rw(0xCC);//SKIP ROM [CCh]
+      w1rw(0xBE);//READ SCRATCHPAD [BEh]
+      *((u8*)&dsValue) = w1rw(0xff);
+      *((u8*)&dsValue+1) = w1rw(0xff);
 /*
 dsCRC = 0;
 for(u8 i = 0; i < 9; i++){
@@ -279,12 +305,15 @@ for(u8 i = 0; i < 9; i++){
 dsData[9] = dsCRC;*/
     //todo Доделать считывание crc и проверку данных
     //  val = val < 0 ? 0 : (buf.u >> 3) + (buf.u >> 1); // 908 БЕЗ ОТР ТЕМПЕРАТУР в десятых
-    dsReadValue = dsReadValue * 10 / 16; //  932 вариант с отрицательной темп. в десятых градуса
+      dsValue = dsValue * 10 / 16; //  932 вариант с отрицательной темп. в десятых градуса
     //  val = val / 16; //  892  с отрицательной темп. в целых градуса  САМЫЙ ЭКОНОМ ПО РАЗМЕРУ
     //  val = val < 0 ? 0 : buf.i >> 4; //  898  В целых градуса без отрицательных
-    return 1; // готовы данные
+      state = 0;
+      tick = TICK_SEC(1);
+    }
   }
 }
+
 
 u8 crcConf(u8 length){
   u8* b = (void*)(&conf);
@@ -414,4 +443,35 @@ bool a0Boot(){
   }
   return false;
 }
+
+
+//    u8 tickDsRead = 1;
+//      u8 dsReadState = 1; //
+
+//void aDsRead(){    //1030
+//
+//if(tickDsRead && !(--tickDsRead)){ // опрос термодатчика. Для запуска нужно установить время до опроса 0 - выключено
+//tickDsRead = 25; // 1 сек
+//PORTD ^= bv(PD6);
+//if((dsReadState = ds18b20Reader(dsReadState))){
+//s7Str2fixPoint(itoa16(dsReadValue, buf), led, sizeof(ledZ), 1);
+//}else{ // первая часть выполнена успешно
+//tickDsRead = TICK_SEC(1);  // самопрограммируемся на вторую
+//}
+//}
+//}
+
+
+
+      if(dsTick && !(--dsTick)){ // опрос термодатчика. Для запуска нужно установить время до опроса 0 - выключено
+        if((dsState = ds18b20Reader(dsState))){
+          dsErr = dsState;
+          s7Str2fixPoint(itoa16(dsValue, buf), led, sizeof(ledZ), 1);
+          dsTick = TICK_SEC(2);
+        }else{ // первая часть выполнена успешно
+          dsTick = TICK_SEC(1);  // самопрограммируемся на второй вызов после преобразования
+        }
+      }
+
+
 */
