@@ -1,7 +1,9 @@
 const u8 PROGMEM ledZ[] = {LED_Z_SET};
 
+#define LED_COUNT (sizeof(ledZ))
+
 /* видеопам€ть */
-char led[sizeof(ledZ)] = {S7_SPACE, S7_MINUS, S7_SPACE};
+char led[LED_COUNT] = {ZG_SPACE, ZG_MINUS, ZG_SPACE};
 
 char buf[12];
 
@@ -19,7 +21,7 @@ struct conf_s {
   u8 crc; // дл€ контрол€ данных в ееп
 };
 
-#define CONF_DEFAULT {WF_TERMO}, {9, 10}, {}
+#define CONF_DEFAULT {WF_TERMO}, {9, -10}, {}
 
 // рабочий сценарий
 u8 workFlow;
@@ -37,12 +39,13 @@ struct conf_s EEMEM conf_e = {CONF_DEFAULT, 166};
 
 struct conf_s conf;
 
+//register i16 dsValue asm("r4");  -28 байт
 i16 dsValue;
 
 u8 dsErr = 9; // 0 - ок, 9 нет измерений
 
 // нажатые кнопки
-u8 btn;
+register u8 btn asm("r3");
 
 //u8 dsData[10];
 
@@ -56,6 +59,7 @@ void tDSRead();
 void reset();
 void saveConf();
 bool loadConf();
+void numToLed(u16 value);
 
 /*
  –абочий автомат режима TERMO
@@ -90,7 +94,8 @@ void a2(){
     switch(state){
       case 0: // показ t (def mode)
         //TODO добавить проверка наличи€ ошибок дл€ отображени€
-        s7Str2fixPoint(itoa16(dsValue, buf), led, 3, 1);
+        numToLed((u16)dsValue);
+//        s7Str2fixPoint(itoa16(dsValue, buf), led, 3, 1);
         if(btn & BTN_SET){
           newState++;
         }
@@ -113,7 +118,9 @@ void a2(){
           if(t > T_MAX){ t = T_MAX;}
           if(t < T_MIN){ t = T_MIN;}
           conf.tr.t = t;
-          s7Str2fixPoint(itoa16(t, buf), &led[1], 2, 0);
+          numToLed(t);
+          led[0] = ZG_t;
+//          s7Str2fixPoint(itoa16(t, buf), &led[1], 2, 0);
           restoreCounter = TICK_SEC(5);
         }
         break;
@@ -128,8 +135,9 @@ void a2(){
         }
       case 1: // вход в состо€ние "показ T (уставки)"
       case 2:
-        led[0] = S7_t;
-        s7Str2fixPoint(itoa16(conf.tr.t, buf), &led[1], 2, 0);
+        numToLed(conf.tr.t);
+        led[0] = ZG_t;
+//        s7Str2fixPoint(itoa16(conf.tr.t, buf), &led[1], 2, 0);
         restoreCounter = TICK_SEC(3);
         break;
       case 3:
@@ -150,7 +158,7 @@ void a2(){
  */
 bool a0Boot(){
   static u8 state = 2;
-  static u8 a0Tick = sizeof(ledZ) + 200; // показать весь индикатор, кнопки + запас
+  static u8 a0Tick = LED_COUNT + 20; // показать весь индикатор, кнопки + запас
 
   if(a0Tick && --a0Tick){ // идет задержка
     return false;
@@ -184,8 +192,8 @@ bool a0Boot(){
       state = 0;
     }
     a0Tick = TICK_SEC(1);
-    led[0] = S7_F;
-    led[1] = pgm_read_byte(&S7[conf.wf.wf]);
+    led[0] = 0x0F;
+    led[1] = conf.wf.wf;
   }
   return false;
 }
@@ -194,9 +202,9 @@ void main(void)
 {
 
   mcuInit();
-  led[0] = S7_SPACE;
-  led[1] = S7_MINUS;
-  led[2] = S7_SPACE;
+  led[0] = ZG_SPACE;
+  led[1] = ZG_MINUS;
+  led[2] = ZG_SPACE;
 
 //  u16 dsTick  = 1;
 //  u8 dsState  = 0; // —осто€ние читалки температуры. Ќе ноль запускает команду преобразовани€ (чтобы не читать позорные "85")
@@ -246,9 +254,54 @@ void mcuInit(){
   //  sei(); а прерываний нет!
 }
 
+/* #define BCD_Calc(digit, value, flag, buf, i, number)    do{digit = 0;\
+  while(value >= number){digit++; value -= number;}   \
+  if (digit) {digit += BCD_SYMBOL; flag = BCD_SYMBOL;}\
+  else {digit = flag;}                                \
+  BCD_SaveDataInBuf(digit, buf, i);                   \
+BCD_SendData(digit); }while(0) */
+
+/*
+  «акидывает в LED буфер число с выравниванием в право
+  ¬озвращает длину числа
+ */
+void numToLed(u16 value){
+  u8 digit = 0;
+  //u8 len = 1;
+  u8 flag = ZG_SPACE;
+  while(value >= 100){
+    value -= 100;
+    digit++;
+  //  len = 3;
+  }
+  if(digit){
+    flag = 0;
+  }else{
+    digit = flag;
+  }
+  led[LED_COUNT - 3] = digit;
+
+  digit = 0;
+  while(value >= 10){
+    value -= 10;
+    digit++;
+  //  len = 2;
+  }
+  if(digit){
+    flag = 0;
+  }else{
+    digit = flag;
+  }
+  led[LED_COUNT - 2] = digit;
+
+  led[LED_COUNT - 1] = value;
+//  return len;
+}
+
+//register u8 ledIndex asm("r7");
 /* динамическа€ индикаци€ + сканироание кнопок 10мс */
 u8 tLedAndKey(){
-  static u8 ledIndex = 0;
+  static u8 ledIndex = 0;   // register -10 байт
 
   // выкл все разр€ды
   iopHigh(LED_Z_PORT, LED_Z_MASK);
@@ -259,13 +312,13 @@ u8 tLedAndKey(){
   _delay_us(5); // сам не знаю зачем. „тобы электроны добежали, куда надо )))
   u8 b = 0x08 | (LED_BT_PIN_MASK & (iopPin(LED_SEG_PORT)));
 
-  if(++ledIndex > sizeof(ledZ) - 1){
+  if(++ledIndex > LED_COUNT - 1){
     ledIndex = 0;
   }
 
   // зажигаем следующий разр€д  SEG-low, Z-high
   iopOutputLow(LED_SEG_PORT, 0xff);
-  iopSet(LED_SEG_PORT, ~led[ledIndex]);
+  iopSet(LED_SEG_PORT, ~pgm_read_byte(&S7[(u8)led[ledIndex]]));  //todo убрать приведение типа
   iopLow(LED_Z_PORT, pgm_read_byte(&ledZ[ledIndex]));
   return b;
 }
@@ -278,6 +331,11 @@ void tDSRead(){
   static u8 state = 0;
   static u16 tick = 1;
   u8 err;
+
+  union{
+    i16 i;
+    u8 u[2];
+    } ds;
 
   if(tick && !(--tick)){
     err = w1Reset();
@@ -294,8 +352,12 @@ void tDSRead(){
     }else{ // 1 чтение и ожидание
       w1rw(0xCC);//SKIP ROM [CCh]
       w1rw(0xBE);//READ SCRATCHPAD [BEh]
-      *((u8*)&dsValue) = w1rw(0xff);
-      *((u8*)&dsValue+1) = w1rw(0xff);
+   //   dsValue = w1rw(0xff);
+    //  dsValue += w1rw(0xff) << 8;
+
+      ds.u[0] = w1rw(0xff);
+      ds.u[1] = w1rw(0xff);
+      dsValue = ds.i;
 /*
 dsCRC = 0;
 for(u8 i = 0; i < 9; i++){

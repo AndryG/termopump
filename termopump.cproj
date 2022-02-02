@@ -121,7 +121,7 @@
   <avrgcc.compiler.optimization.AllocateBytesNeededForEnum>True</avrgcc.compiler.optimization.AllocateBytesNeededForEnum>
   <avrgcc.compiler.optimization.DebugLevel>Default (-g2)</avrgcc.compiler.optimization.DebugLevel>
   <avrgcc.compiler.warnings.AllWarnings>True</avrgcc.compiler.warnings.AllWarnings>
-  <avrgcc.compiler.miscellaneous.OtherFlags>-std=gnu99 -include ../termopump.h -Wno-main</avrgcc.compiler.miscellaneous.OtherFlags>
+  <avrgcc.compiler.miscellaneous.OtherFlags>-std=gnu99 -include ../termopump.h -Wno-main -ffixed-r3 -ffixed-r4 -ffixed-r5</avrgcc.compiler.miscellaneous.OtherFlags>
   <avrgcc.linker.libraries.Libraries>
     <ListValues>
       <Value>libm</Value>
