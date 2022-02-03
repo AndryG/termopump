@@ -5,7 +5,10 @@ const u8 PROGMEM ledZ[] = {LED_Z_SET};
 /* видеопамять */
 char led[LED_COUNT] = {ZG_SPACE, ZG_MINUS, ZG_SPACE};
 
-char buf[12];
+/* битовая маска морграющих разрядов индикатора */
+u8 ledBlink;
+
+// char buf[12];
 
 struct conf_s {
   struct confWf{
@@ -43,6 +46,7 @@ struct conf_s conf;
 i16 dsValue;
 
 u8 dsErr = 9; // 0 - ок, 9 нет измерений
+#define E_DS_CRC 8
 
 // нажатые кнопки
 register u8 btn asm("r3");
@@ -95,6 +99,7 @@ void a2(){
       case 0: // показ t (def mode)
         //TODO добавить проверка наличия ошибок для отображения
         numToLed((u16)dsValue);
+        ledBlink = 0;
 //        s7Str2fixPoint(itoa16(dsValue, buf), led, 3, 1);
         if(btn & BTN_SET){
           newState++;
@@ -133,8 +138,9 @@ void a2(){
         if(2 == state){ // сохранение conf при выходе из "изменение T (уставки)"
           saveConf();
         }
-      case 1: // вход в состояние "показ T (уставки)"
-      case 2:
+      case 2: // вход в состояние "показ T (уставки)"
+        ledBlink = 0x03;
+      case 1:
         numToLed(conf.tr.t);
         led[0] = ZG_t;
 //        s7Str2fixPoint(itoa16(conf.tr.t, buf), &led[1], 2, 0);
@@ -209,7 +215,6 @@ void main(void)
 //  u16 dsTick  = 1;
 //  u8 dsState  = 0; // Состояние читалки температуры. Не ноль запускает команду преобразования (чтобы не читать позорные "85")
   u16 tickBlink   = 0;
-  u8 blinkCnt     = 0;
 
   while (1)
   {
@@ -231,11 +236,6 @@ void main(void)
       if(tickBlink && !(--tickBlink)){
         tickBlink = TICK_SEC(1);
         PINA = bv(PA1);
-        if(blinkCnt++ & 1){
-          relayOn();
-        }else{
-          relayOff();
-        }
       }
     }// tick
   }
@@ -299,9 +299,17 @@ void numToLed(u16 value){
 }
 
 //register u8 ledIndex asm("r7");
-/* динамическая индикация + сканироание кнопок 10мс */
+/* динамическая индикация + сканирование кнопок */
 u8 tLedAndKey(){
-  static u8 ledIndex = 0;   // register -10 байт
+  static u8 ledIndex  = 0;  // register -10 байт
+  static u8 ledIndexP2= 0;  // два в степени index для проверки маски моргания
+  static u8 tickBlink = 0;  // 
+  static u8 blinkFlag = 0;  // признак моргания
+  
+  if(0 == --tickBlink){
+    tickBlink = TICK_MS(400);
+    blinkFlag = blinkFlag ? 0 : ledBlink; // переносим маску моргалок. Так будет только одна проверка по маске вместо двух: по маске и флагу
+  }
 
   // выкл все разряды
   iopHigh(LED_Z_PORT, LED_Z_MASK);
@@ -312,64 +320,67 @@ u8 tLedAndKey(){
   _delay_us(5); // сам не знаю зачем. Чтобы электроны добежали, куда надо )))
   u8 b = 0x08 | (LED_BT_PIN_MASK & (iopPin(LED_SEG_PORT)));
 
+  ledIndexP2 >>= 1;
   if(++ledIndex > LED_COUNT - 1){
     ledIndex = 0;
+    ledIndexP2 = 1 << (LED_COUNT -1);
   }
 
   // зажигаем следующий разряд  SEG-low, Z-high
-  iopOutputLow(LED_SEG_PORT, 0xff);
-  iopSet(LED_SEG_PORT, ~pgm_read_byte(&S7[(u8)led[ledIndex]]));  //todo убрать приведение типа
-  iopLow(LED_Z_PORT, pgm_read_byte(&ledZ[ledIndex]));
+  if(0 == (ledIndexP2 & blinkFlag)){
+    iopOutputLow(LED_SEG_PORT, 0xff);
+    iopSet(LED_SEG_PORT, ~pgm_read_byte(&S7[(u8)led[ledIndex]]));  //todo убрать приведение типа
+    iopLow(LED_Z_PORT, pgm_read_byte(&ledZ[ledIndex]));
+  }  
   return b;
 }
 
 /*
   чтение температуры
-  return ошибка чтения: 0 - окб; 1 - no present; 2 - замыкание
+  return ошибка чтения: 0 - ок; 1 - no present; 2 - замыкание
 */
 void tDSRead(){
   static u8 state = 0;
   static u16 tick = 1;
-  u8 err;
 
   union{
     i16 i;
     u8 u[2];
-    } ds;
+  } ds;
 
   if(tick && !(--tick)){
-    err = w1Reset();
+    u8 err = w1Reset();
     if(err){
       dsErr = err;
       tick = TICK_SEC(3);
       return;
     }
-    if(0 == state){ // запрос на преобразование и ждем
-      w1rw(0xCC); //SKIP ROM [CCh]
-      w1rw(0x44); //CONVERT  [44h]
+    if(0 == state){ // запрос на преобразование
+      w1rw(0xCC);   //SKIP ROM [CCh]
+      w1rw(0x44);   //CONVERT  [44h]
       state++;
       tick = TICK_SEC(1);
-    }else{ // 1 чтение и ожидание
-      w1rw(0xCC);//SKIP ROM [CCh]
-      w1rw(0xBE);//READ SCRATCHPAD [BEh]
-   //   dsValue = w1rw(0xff);
-    //  dsValue += w1rw(0xff) << 8;
+    }else{         // 1 чтение и проверка данных
+      w1rw(0xCC);  //SKIP ROM [CCh]
+      w1rw(0xBE);  //READ SCRATCHPAD [BEh]
 
-      ds.u[0] = w1rw(0xff);
-      ds.u[1] = w1rw(0xff);
-      dsValue = ds.i;
-/*
-dsCRC = 0;
-for(u8 i = 0; i < 9; i++){
-  u8 b = dsData[i] = w1rw(0xff);
-  dsCRC = w1CRCUpdate(dsCRC, b);
-}
-dsData[9] = dsCRC;*/
-    //todo Доделать считывание crc и проверку данных
-    //  val = val < 0 ? 0 : (buf.u >> 3) + (buf.u >> 1); // 908 БЕЗ ОТР ТЕМПЕРАТУР в десятых
-      dsValue = dsValue * 10 / 16; //  932 вариант с отрицательной темп. в десятых градуса
-    //  val = val / 16; //  892  с отрицательной темп. в целых градуса  САМЫЙ ЭКОНОМ ПО РАЗМЕРУ
-    //  val = val < 0 ? 0 : buf.i >> 4; //  898  В целых градуса без отрицательных
+      u8 crc = 0;
+      for(u8 i = 0; i < 9; i++){
+        u8 b = w1rw(0xff);
+        if(i < 2){
+           ds.u[i] = b;
+        }
+        if(4 == i && !b){
+          b = 57; // что выбить ошибку датчика
+        }
+        crc = w1CRCUpdate(crc, b);
+      }
+      if(crc){
+        dsErr = E_DS_CRC;
+      }else{
+        dsValue = ds.i;
+        dsValue = dsValue * 10 / 16;
+      }
       state = 0;
       tick = TICK_SEC(1);
     }
@@ -534,6 +545,13 @@ bool a0Boot(){
           dsTick = TICK_SEC(1);  // самопрограммируемся на второй вызов после преобразования
         }
       }
+
+      //todo Доделать считывание crc и проверку данных
+      //  val = val < 0 ? 0 : (buf.u >> 3) + (buf.u >> 1); // 908 БЕЗ ОТР ТЕМПЕРАТУР в десятых
+      dsValue = dsValue * 10 / 16; //  932 вариант с отрицательной темп. в десятых градуса
+      //  val = val / 16; //  892  с отрицательной темп. в целых градуса  САМЫЙ ЭКОНОМ ПО РАЗМЕРУ
+      //  val = val < 0 ? 0 : buf.i >> 4; //  898  В целых градуса без отрицательных
+
 
 
 */
