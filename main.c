@@ -8,6 +8,9 @@ char led[LED_COUNT] = {ZG_SPACE, ZG_MINUS, ZG_SPACE};
 /* битовая маска морграющих разрядов индикатора */
 u8 ledBlink;
 
+// u32 sec;
+u8 secf; // доли секунды
+
 // char buf[12];
 
 struct conf_s {
@@ -94,6 +97,11 @@ void a2(){
   u8 newState = state;
   if(restoreCounter && !(--restoreCounter)){ // досчитали тики до нуля и сбрасываем на нулевое состояние
     newState = 0;
+    if(2 == state){
+      saveConf();
+    }else{
+      loadConf();
+    }
   }else{
     switch(state){
       case 0: // показ t (def mode)
@@ -101,8 +109,8 @@ void a2(){
         numToLed((u16)dsValue);
         ledBlink = 0;
 //        s7Str2fixPoint(itoa16(dsValue, buf), led, 3, 1);
-        if(btn & BTN_SET){
-          newState++;
+        if(btn){// & BTN_SET|BTN_MINUS|BTN_PLUS){
+          newState = 2;
         }
         a3TermoCore();
         break;
@@ -115,18 +123,20 @@ void a2(){
         if(btn & BTN_SET){    // 1248
           restoreCounter = 1;
         }
-        if(btn & (BTN_MINUS | BTN_PLUS)){
+        if(1){
           i16 t = conf.tr.t;
-          t += (btn & BTN_PLUS) ? 1 : -1;
-          #define T_MAX 27
-          #define T_MIN 0
-          if(t > T_MAX){ t = T_MAX;}
-          if(t < T_MIN){ t = T_MIN;}
-          conf.tr.t = t;
+          if(btn & (BTN_MINUS | BTN_PLUS)){
+            t += (btn & BTN_PLUS) ? 1 : -1;
+            #define T_MAX 27
+            #define T_MIN 0
+            if(t > T_MAX){ t = T_MAX;}
+            if(t < T_MIN){ t = T_MIN;}
+            conf.tr.t = t;
+  //          s7Str2fixPoint(itoa16(t, buf), &led[1], 2, 0);
+            restoreCounter = TICK_SEC(5);
+          }
           numToLed(t);
           led[0] = ZG_t;
-//          s7Str2fixPoint(itoa16(t, buf), &led[1], 2, 0);
-          restoreCounter = TICK_SEC(5);
         }
         break;
     }
@@ -135,14 +145,14 @@ void a2(){
   if(state != newState){ // вход в новое состояние
     switch(newState){
       case 0:
-        if(2 == state){ // сохранение conf при выходе из "изменение T (уставки)"
-          saveConf();
-        }
+   //     if(2 == state){ // сохранение conf при выходе из "изменение T (уставки)"
+   //       saveConf();
+   //     }
       case 2: // вход в состояние "показ T (уставки)"
         ledBlink = 0x03;
       case 1:
-        numToLed(conf.tr.t);
-        led[0] = ZG_t;
+//        numToLed(conf.tr.t);
+//        led[0] = ZG_t;
 //        s7Str2fixPoint(itoa16(conf.tr.t, buf), &led[1], 2, 0);
         restoreCounter = TICK_SEC(3);
         break;
@@ -153,7 +163,6 @@ void a2(){
   }
   state = newState;
 }
-
 
 /*
   Автомат начальной загрузки, загрузки и смены workflow - рабочего процесса
@@ -223,15 +232,19 @@ void main(void)
       TIFR = (1<<TOV0);
       TCNT0 = 0xff + 1 - F_CPU / 256 / F_TICK; // 0x64
 
-      tDSRead();
-      btn = tbtnProcess(tLedAndKey()); // ПРОСЛЕДИТЬ, чтобы биты были в начале байта (подвинуть)
-
-      if(a0Boot()){
-        switch(conf.wf.wf){
-          case WF_TERMO: a2(); break;
-        }
+      if(!--secf){
+        secf = TICK_SEC(1);
       }
 
+      tDSRead();
+      btn = tbtnProcess(tLedAndKey());
+
+  //    if(a0Boot()){
+  //      switch(conf.wf.wf){
+  //        case WF_TERMO: a2(); break;
+  //      }
+  //    }
+      a3TermoCore();
       // blink
       if(tickBlink && !(--tickBlink)){
         tickBlink = TICK_SEC(1);
@@ -302,14 +315,6 @@ void numToLed(u16 value){
 /* динамическая индикация + сканирование кнопок */
 u8 tLedAndKey(){
   static u8 ledIndex  = 0;  // register -10 байт
-  static u8 ledIndexP2= 0;  // два в степени index для проверки маски моргания
-  static u8 tickBlink = 0;  // 
-  static u8 blinkFlag = 0;  // признак моргания
-  
-  if(0 == --tickBlink){
-    tickBlink = TICK_MS(400);
-    blinkFlag = blinkFlag ? 0 : ledBlink; // переносим маску моргалок. Так будет только одна проверка по маске вместо двух: по маске и флагу
-  }
 
   // выкл все разряды
   iopHigh(LED_Z_PORT, LED_Z_MASK);
@@ -320,18 +325,16 @@ u8 tLedAndKey(){
   _delay_us(5); // сам не знаю зачем. Чтобы электроны добежали, куда надо )))
   u8 b = 0x08 | (LED_BT_PIN_MASK & (iopPin(LED_SEG_PORT)));
 
-  ledIndexP2 >>= 1;
   if(++ledIndex > LED_COUNT - 1){
     ledIndex = 0;
-    ledIndexP2 = 1 << (LED_COUNT -1);
   }
 
   // зажигаем следующий разряд  SEG-low, Z-high
-  if(0 == (ledIndexP2 & blinkFlag)){
+  if(!(ledBlink && (secf & 0x40))){
     iopOutputLow(LED_SEG_PORT, 0xff);
     iopSet(LED_SEG_PORT, ~pgm_read_byte(&S7[(u8)led[ledIndex]]));  //todo убрать приведение типа
     iopLow(LED_Z_PORT, pgm_read_byte(&ledZ[ledIndex]));
-  }  
+  }
   return b;
 }
 
