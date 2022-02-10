@@ -9,7 +9,7 @@ char led[LED_COUNT] = {ZG_SPACE, ZG_MINUS, ZG_SPACE};
 u8 ledBlink;
 
 // u32 sec;
-u8 secf; // доли секунды
+u8 secf = 1; // доли секунды
 
 // char buf[12];
 
@@ -217,39 +217,50 @@ void main(void)
 {
 
   mcuInit();
-  led[0] = ZG_SPACE;
-  led[1] = ZG_MINUS;
-  led[2] = ZG_SPACE;
+  led[0] = bv(S7_SEG_F);
+  led[1] = bv(S7_SEG_G);
+  led[2] = bv(S7_SEG_P);
+  led[0] = 1;
+  led[1] = 2;
+  led[2] = 3;
 
 //  u16 dsTick  = 1;
 //  u8 dsState  = 0; // Состояние читалки температуры. Не ноль запускает команду преобразования (чтобы не читать позорные "85")
   u16 tickBlink   = 0;
-
+            u8 b = 0;
   while (1)
   {
     if(TIFR & (1<<TOV0)){ // tick
+      led[0] = 5;
 
       TIFR = (1<<TOV0);
       TCNT0 = 0xff + 1 - F_CPU / 256 / F_TICK; // 0x64
 
       if(!--secf){
         secf = TICK_SEC(1);
-      }
+      }        
+        if(++b > 9){
+          b = 0;
+        }
+        led[0] = b-1;
+        led[1] = b;
+        led[2] = b+1;
+      
 
-      tDSRead();
+  //    tDSRead();
       btn = tbtnProcess(tLedAndKey());
 
-  //    if(a0Boot()){
-  //      switch(conf.wf.wf){
-  //        case WF_TERMO: a2(); break;
-  //      }
-  //    }
-      a3TermoCore();
+ //     if(a0Boot()){
+    //    switch(conf.wf.wf){
+    //      case WF_TERMO: a2(); break;
+   //     }
+   //   }
+  //    a3TermoCore();
       // blink
-      if(tickBlink && !(--tickBlink)){
-        tickBlink = TICK_SEC(1);
-        PINA = bv(PA1);
-      }
+ //     if(tickBlink && !(--tickBlink)){
+   //     tickBlink = TICK_SEC(1);
+   //     PINA = bv(PA1);
+  //    }
     }// tick
   }
 }
@@ -333,6 +344,7 @@ u8 tLedAndKey(){
   if(!(ledBlink && (secf & 0x40))){
     iopOutputLow(LED_SEG_PORT, 0xff);
     iopSet(LED_SEG_PORT, ~pgm_read_byte(&S7[(u8)led[ledIndex]]));  //todo убрать приведение типа
+//    iopSet(LED_SEG_PORT, ~((u8)led[ledIndex]));  //todo убрать приведение типа
     iopLow(LED_Z_PORT, pgm_read_byte(&ledZ[ledIndex]));
   }
   return b;

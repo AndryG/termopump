@@ -28,19 +28,19 @@
 #define ZG_MINUS (ZG_SPACE + 1)
 #define ZG_t (ZG_MINUS + 1)
 
-#define S7_SEG_A 7
-#define S7_SEG_B 0
+#define S7_SEG_A  7
+#define S7_SEG_B  0
 #define S7_SEG_C 2
-#define S7_SEG_D 4
-#define S7_SEG_E 5
-#define S7_SEG_F 6
+#define S7_SEG_D  4  
+#define S7_SEG_E  5 
+#define S7_SEG_F  6 
 #define S7_SEG_G 1
-#define S7_SEG_P 3
+#define S7_SEG_P  3
 
 // порт разрядов индикатора
 #define LED_Z_PORT PORTD
 // порязрядные маски пинов для массива (будет вставлено в массив const u8 PROGMEM ledZ[] = {LED_Z_SET}; )
-#define LED_Z_SET  bv(PD6), bv(PD5), bv(PD4)
+#define LED_Z_SET  bv(PD6), bv(PD4), bv(PD5)
 // маска для всех пинов
 #define LED_Z_MASK (bv(PD6)|bv(PD4)|bv(PD5))
 
@@ -50,7 +50,7 @@
 // пины чтения кнопок
 #define LED_BT_PIN_MASK 0x07
 // общее заземление кнопок
-#define LED_BT_COMMON_MASK 0x08
+#define LED_BT_COMMON_MASK 0x80
 
 #define BTN_SET   TBTN_1
 #define BTN_MINUS TBTN_2
