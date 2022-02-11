@@ -22,11 +22,13 @@
 
 #include "ss.lib/queuetask.h"
 
-#define S7_SET S7_0, S7_1, S7_2, S7_3, S7_4, S7_5, S7_6, S7_7, S7_8, S7_9, S7_A, S7_b, S7_C, S7_d, S7_E, S7_F, S7_SPACE, S7_MINUS, S7_t
+#define S7_SET S7_0, S7_1, S7_2, S7_3, S7_4, S7_5, S7_6, S7_7, S7_8, S7_9, S7_A, S7_b, S7_C, S7_d, S7_E, S7_F, \
+        S7_SPACE, S7_MINUS, S7_t, S7_L
 
 #define ZG_SPACE 16
 #define ZG_MINUS (ZG_SPACE + 1)
 #define ZG_t (ZG_MINUS + 1)
+#define ZG_L (ZG_t + 1)
 
 #define S7_SEG_A 7
 #define S7_SEG_B 0
@@ -40,7 +42,7 @@
 // порт разрядов индикатора
 #define LED_Z_PORT PORTD
 // порязрядные маски пинов для массива (будет вставлено в массив const u8 PROGMEM ledZ[] = {LED_Z_SET}; )
-#define LED_Z_SET  bv(PD6), bv(PD5), bv(PD4)
+#define LED_Z_SET  bv(PD6), bv(PD4), bv(PD5)
 // маска для всех пинов
 #define LED_Z_MASK (bv(PD6)|bv(PD4)|bv(PD5))
 
@@ -49,8 +51,8 @@
 
 // пины чтения кнопок
 #define LED_BT_PIN_MASK 0x07
-// общее заземление кнопок
-#define LED_BT_COMMON_MASK 0x08
+// общее заземление кнопок (маска пина)
+#define LED_BT_COMMON_MASK 0x80
 
 #define BTN_SET   TBTN_1
 #define BTN_MINUS TBTN_2
@@ -58,9 +60,9 @@
 // биты кнопок с автоповтором
 #define TBTN_REPEATE_MASK BTN_PLUS|BTN_MINUS
 
-#define TBTN_DELAY_A      TICK_MS(500)
+#define TBTN_DELAY_A      TICK_MS(750)
 
-#define TBTN_DELAY_B      TICK_MS(75)
+#define TBTN_DELAY_B      TICK_MS(175)
 
 #define RELAY_PORT  PORTD
 #define RELAY_BIT   PD2
@@ -85,6 +87,16 @@ inline void relayOn(){
 inline void relayOff(){
   iopLow(RELAY_PORT, bv(RELAY_BIT));
 }
+
+#ifdef DEBUG
+  #define A0Low  iopLow(PORTA, bv(PA0)) 
+  #define A0High iopHigh(PORTA, bv(PA0))
+#else
+  #define A0Low
+  #define a0High
+#endif
+    
+
 
 
 

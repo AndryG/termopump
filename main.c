@@ -8,8 +8,8 @@ char led[LED_COUNT] = {ZG_SPACE, ZG_MINUS, ZG_SPACE};
 /* битова€ маска морграющих разр€дов индикатора */
 u8 ledBlink;
 
-// u32 sec;
-u8 secf; // доли секунды
+//u32 sec;
+u8 secf; // доли секунды register -10
 
 // char buf[12];
 
@@ -24,10 +24,12 @@ struct conf_s {
   struct confSt{
     u8 power;  // 0-1 состо€ние реле при включении
   } st;
+  u8 regErr; // зарегестрированные ошибки
+  u8 light;  // €ркость индикатора
   u8 crc; // дл€ контрол€ данных в ееп
 };
 
-#define CONF_DEFAULT {WF_TERMO}, {9, -10}, {}
+#define CONF_DEFAULT {WF_STABLE}, {9, -10}, {}, 0, 0xff
 
 // рабочий сценарий
 u8 workFlow;
@@ -52,7 +54,7 @@ u8 dsErr = 9; // 0 - ок, 9 нет измерений
 #define E_DS_CRC 8
 
 // нажатые кнопки
-register u8 btn asm("r3");
+u8 btn;//  asm("r3");
 
 //u8 dsData[10];
 
@@ -68,6 +70,68 @@ void saveConf();
 bool loadConf();
 void numToLed(u16 value);
 
+/** ¬аринат интерфейса "X * Y" √оризонтальные экраны и настройками в каждом
+  Ќомер вертикали в старшей тетраде. Ќомер состо€ни€ в вертикали - младша€ тетрада
+ */
+void a4(){
+  static u8 state = 0;
+  #define DS_ERR_COUNT 6
+  // счетчик ошибок чтени€ ds. ѕри обнулении регулировка отключаетс€
+  static u8 dsErrCount = DS_ERR_COUNT;
+  static u8 a4Err = 0;
+  
+  u8 newState = state;
+  
+  if(btn & BTN_PLUS){ // пролистывание по горизонтали T / t / Err / clr
+    newState += 0x10;
+    newState &= 0x3f;
+  }else if(btn & BTN_MINUS){
+    newState -= 0x10;
+    newState &= 0x3f;
+  }else if((btn & BTN_SET) && (0 == (state & 0x0f))){ // переход к настройкам
+    newState++;
+  }else{
+    switch(state){
+      case 0x00: // распределитель с перескоком на show T или show Err
+        led[0] = ZG_SPACE;
+        led[1] = ZG_MINUS;
+        led[2] = ZG_SPACE;
+        break;
+      case 0x10:  // show T (текуща€)
+        numToLed(dsValue);
+        break;
+      case 0x20: // show t (уставка)  
+        numToLed(conf.tr.t);
+        led[0] = ZG_t;
+        break;
+      case 0x30: // show Err
+        numToLed(conf.regErr);
+        led[0] = 0x0E;
+        break;
+    } // switch
+  }
+  /* вход в состо€ние редактировани€ величины:
+      - загрузить значение и вилку значений
+      - сохранить адрес сохранени€ величины
+    выход из состо€ни€ редактировани€:
+      - сохранить значение по адресу
+      - ...  
+    —осто€ни€ редактора на вилках: 0bxx01xx (маска state)
+      */
+  if(state != newState){ // вход в новое состо€ние
+    switch(newState){
+      case 0x13: // save
+      case 0x22:
+      case 0x32:
+      case 0x01:
+      break;
+    }
+  }    
+  
+  state = newState;
+  
+}
+
 /*
  –абочий автомат режима TERMO
  –елейное управление с гистерезисом.
@@ -77,7 +141,7 @@ void numToLed(u16 value);
  */
 void a3TermoCore(){
   i16 T = conf.tr.t * 10;
-  i8 dt =  conf.tr.dt;
+  i8 dt = conf.tr.dt;
   if(0 == dt){
     // error
   }else{
@@ -173,7 +237,7 @@ void a2(){
  */
 bool a0Boot(){
   static u8 state = 2;
-  static u8 a0Tick = LED_COUNT + 20; // показать весь индикатор, кнопки + запас
+  static u8 a0Tick = 20 + TICK_MS(500); // показать весь индикатор, кнопки + запас
 
   if(a0Tick && --a0Tick){ // идет задержка
     return false;
@@ -223,33 +287,45 @@ void main(void)
 
 //  u16 dsTick  = 1;
 //  u8 dsState  = 0; // —осто€ние читалки температуры. Ќе ноль запускает команду преобразовани€ (чтобы не читать позорные "85")
-  u16 tickBlink   = 0;
-
+//  u16 tickBlink   = 0;
+//  u8 a[3] = {0,0,0};
   while (1)
   {
     if(TIFR & (1<<TOV0)){ // tick
+//      PINA = 0x02;  
 
       TIFR = (1<<TOV0);
       TCNT0 = 0xff + 1 - F_CPU / 256 / F_TICK; // 0x64
 
-      if(!--secf){
+      if(0 == --secf){
         secf = TICK_SEC(1);
       }
 
       tDSRead();
       btn = tbtnProcess(tLedAndKey());
+      //if(btn & 0x01){ a[0]++;   }
+      //if(btn & 0x02){ a[1]++;   }
+      //if(btn & 0x04){ a[2]++;   }
+      //
+      //led[0] = a[0] & 0x0f;
+      //led[1] = a[1] & 0x0f;
+      //led[2] = a[2] & 0x0f;
 
-  //    if(a0Boot()){
-  //      switch(conf.wf.wf){
-  //        case WF_TERMO: a2(); break;
-  //      }
-  //    }
-      a3TermoCore();
+/**/
+      if(a0Boot()){
+        switch(conf.wf.wf){
+          case WF_TERMO: a2(); break;
+          case WF_STABLE: a4();break;
+        }
+      } 
+   //   a3TermoCore();
+// */      
       // blink
-      if(tickBlink && !(--tickBlink)){
+/*      if(tickBlink && !(--tickBlink)){
         tickBlink = TICK_SEC(1);
         PINA = bv(PA1);
       }
+*/      
     }// tick
   }
 }
@@ -265,6 +341,10 @@ void mcuInit(){
   // релюшка
   iopOutputLow(RELAY_PORT, bv(RELAY_BIT));
   //  sei(); а прерываний нет!
+  #ifdef DEBUG
+  iopOutputHigh(PORTA, bv(PA0));
+  iopOutputHigh(PORTA, bv(PA1));
+  #endif
 }
 
 /* #define BCD_Calc(digit, value, flag, buf, i, number)    do{digit = 0;\
@@ -350,8 +430,9 @@ void tDSRead(){
     i16 i;
     u8 u[2];
   } ds;
-
+  
   if(tick && !(--tick)){
+    
     u8 err = w1Reset();
     if(err){
       dsErr = err;
@@ -359,16 +440,19 @@ void tDSRead(){
       return;
     }
     if(0 == state){ // запрос на преобразование
+      
       w1rw(0xCC);   //SKIP ROM [CCh]
       w1rw(0x44);   //CONVERT  [44h]
       state++;
-      tick = TICK_SEC(1);
+      tick = TICK_SEC(2);
     }else{         // 1 чтение и проверка данных
+A0High;
       w1rw(0xCC);  //SKIP ROM [CCh]
       w1rw(0xBE);  //READ SCRATCHPAD [BEh]
 
       u8 crc = 0;
       for(u8 i = 0; i < 9; i++){
+        PINA = 0x01;
         u8 b = w1rw(0xff);
         if(i < 2){
            ds.u[i] = b;
@@ -385,8 +469,9 @@ void tDSRead(){
         dsValue = dsValue * 10 / 16;
       }
       state = 0;
-      tick = TICK_SEC(1);
+      tick = TICK_MS(500);
     }
+A0Low;
   }
 }
 
@@ -441,7 +526,7 @@ void reset(){
 void wdt_init(void) __attribute__((naked)) __attribute__((section(".init3")));
 
 void wdt_init(void){
-//    MCUSR = 0;
+    MCUSR = 0; /* ¬ примере даташита очищатс€ бит WDRF. хз зачем*/
     wdt_disable();
     return;
 }
