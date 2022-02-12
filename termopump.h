@@ -82,12 +82,6 @@
 
 #include "ss.lib/itoa.h"
 
-inline void relayOn(){
-  iopHigh(RELAY_PORT, bv(RELAY_BIT));
-}
-inline void relayOff(){
-  iopLow(RELAY_PORT, bv(RELAY_BIT));
-}
 
 #ifdef DEBUG
   #define A0Low  iopLow(PORTA, bv(PA0)) 

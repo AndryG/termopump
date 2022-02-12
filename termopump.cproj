@@ -141,9 +141,6 @@
     <PostBuildEvent>"$(ToolchainDir)\avr-objcopy" -I ihex $(OutputDirectory)\$(OutputFileName).eep -O binary $(OutputDirectory)\$(OutputFileName).eep.bin</PostBuildEvent>
   </PropertyGroup>
   <ItemGroup>
-    <None Include="1wire2.c">
-      <SubType>compile</SubType>
-    </None>
     <Compile Include="main.c">
       <SubType>compile</SubType>
     </Compile>
