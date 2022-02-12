@@ -3,7 +3,7 @@ const u8 PROGMEM ledZ[] = {LED_Z_SET};
 #define LED_COUNT (sizeof(ledZ))
 
 /* видеопам€ть */
-char led[LED_COUNT] = {ZG_SPACE, ZG_MINUS, ZG_SPACE};
+char led[LED_COUNT];
 
 /* битова€ маска морграющих разр€дов индикатора */
 u8 ledBlink;
@@ -18,18 +18,18 @@ struct conf_s {
     u8 wf; // сценарий работы при загрузке
   } wf;
   struct confTr{
-    i16 t; // температурна€ уставка
+    i8 t; // температурна€ уставка
     i8 dt; // гистерезис температуры /-12.0 - 12.0/ в дес€тых градуса >0 режим охлаждени€, <0 режим нагревател€
   } tr;
   struct confSt{
     u8 power;  // 0-1 состо€ние реле при включении
   } st;
   u8 regErr; // зарегестрированные ошибки
-  u8 light;  // €ркость индикатора
+  i8 light;  // €ркость индикатора
   u8 crc; // дл€ контрол€ данных в ееп
 };
 
-#define CONF_DEFAULT {WF_STABLE}, {9, -10}, {}, 0, 0xff
+#define CONF_DEFAULT {WF_STABLE}, {9, -10}, {}, 5, 7
 
 // рабочий сценарий
 u8 workFlow;
@@ -68,7 +68,17 @@ void tDSRead();
 void reset();
 void saveConf();
 bool loadConf();
-void numToLed(u16 value);
+u8 numToLed(u16 value);
+
+// "редактор на вилке"
+i8* edValue = NULL;
+i8 edMin, edMax;
+
+/* —охранить настройки, выйти с редактора*/
+u8 a4Save(u8 state){
+  saveConf();
+  return state & 0xf0;  
+}
 
 /** ¬аринат интерфейса "X * Y" √оризонтальные экраны и настройками в каждом
   Ќомер вертикали в старшей тетраде. Ќомер состо€ни€ в вертикали - младша€ тетрада
@@ -79,57 +89,112 @@ void a4(){
   // счетчик ошибок чтени€ ds. ѕри обнулении регулировка отключаетс€
   static u8 dsErrCount = DS_ERR_COUNT;
   static u8 a4Err = 0;
-  
+
   u8 newState = state;
   
-  if(btn & BTN_PLUS){ // пролистывание по горизонтали T / t / Err / clr
-    newState += 0x10;
+  ledBlink = true;
+
+  if(0 == (state & 0x0f)){
+    ledBlink = false;
+    if(btn & BTN_PLUS){ // пролистывание по горизонтали T / t / Err / clr
+      newState += 0x10;
+    }else if(btn & BTN_MINUS){ // пролистывание в обратную сторону
+      newState -= 0x10;
+    }else if((btn & BTN_SET)){ // переход к настройкам, кроме нулевого
+      newState += 1;
+    }
     newState &= 0x3f;
-  }else if(btn & BTN_MINUS){
-    newState -= 0x10;
-    newState &= 0x3f;
-  }else if((btn & BTN_SET) && (0 == (state & 0x0f))){ // переход к настройкам
-    newState++;
-  }else{
+  }else if(edValue){//(state & 0x0C) == 0){ // "редактор на вилках" состо€ние с маской 0b00xx00xx
+    i8 d = 0;
+    if(btn & BTN_PLUS && *edValue < edMax){
+      d = 1;
+    }
+    if(btn & BTN_MINUS && *edValue > edMin){
+      d -= 1;
+    }
+    i16 val = *edValue += d;
+    u8 neg = val < 0;
+    u8 len = numToLed(neg ? val : 0 - val); // 1668
+    if(neg && len < LED_COUNT){
+      led[LED_COUNT - 1 - len] = ZG_MINUS;
+    }
+    
+    if(btn & BTN_SET){ // сохранить результат
+      newState = a4Save(state);
+    }
+    
+  }
     switch(state){
       case 0x00: // распределитель с перескоком на show T или show Err
         led[0] = ZG_SPACE;
         led[1] = ZG_MINUS;
         led[2] = ZG_SPACE;
+        edValue = &conf.light;
+        edMin = 0;
+        edMax = 12;
         break;
+      case 0x01:
+       led[0] = ZG_L;
+       break;       
       case 0x10:  // show T (текуща€)
         numToLed(dsValue);
+        edValue = &conf.tr.dt;
+        edMin = -12;
+        edMax = 12;
         break;
-      case 0x20: // show t (уставка)  
+      case 0x11:
+        if(conf.tr.dt > -10){
+          led[0] = ZG_d;
+        }
+        break;
+      case 0x21:  
+      case 0x20: // show t (уставка)
         numToLed(conf.tr.t);
         led[0] = ZG_t;
+        edValue = &conf.tr.t;
+        edMin = 0;
+        edMax = 27;
         break;
+      case 0x31:
+        if(btn & BTN_MINUS){ // очистка ошибок
+          conf.regErr = 0;
+          newState = a4Save(state);
+        }
       case 0x30: // show Err
+        edValue = NULL;
         numToLed(conf.regErr);
         led[0] = 0x0E;
         break;
     } // switch
-  }
+  
   /* вход в состо€ние редактировани€ величины:
       - загрузить значение и вилку значений
       - сохранить адрес сохранени€ величины
     выход из состо€ни€ редактировани€:
       - сохранить значение по адресу
-      - ...  
+      - ...
     —осто€ни€ редактора на вилках: 0bxx01xx (маска state)
       */
   if(state != newState){ // вход в новое состо€ние
     switch(newState){
+ /*     case 0x31: 
+        newState = 0x034; // уходим из маски редактора
+        break;*/
+      case 0x11: // вход в редактор на вилке
+      case 0x12:
+      case 0x21:
+
+        break;
       case 0x13: // save
       case 0x22:
       case 0x32:
       case 0x01:
       break;
     }
-  }    
-  
+  } // if вход в состо€ние
+
   state = newState;
-  
+
 }
 
 /*
@@ -292,7 +357,7 @@ void main(void)
   while (1)
   {
     if(TIFR & (1<<TOV0)){ // tick
-//      PINA = 0x02;  
+//      PINA = 0x02;
 
       TIFR = (1<<TOV0);
       TCNT0 = 0xff + 1 - F_CPU / 256 / F_TICK; // 0x64
@@ -310,22 +375,21 @@ void main(void)
       //led[0] = a[0] & 0x0f;
       //led[1] = a[1] & 0x0f;
       //led[2] = a[2] & 0x0f;
-
 /**/
       if(a0Boot()){
         switch(conf.wf.wf){
-          case WF_TERMO: a2(); break;
+      //    case WF_TERMO: a2(); break;
           case WF_STABLE: a4();break;
         }
-      } 
+      }
    //   a3TermoCore();
-// */      
+// */
       // blink
 /*      if(tickBlink && !(--tickBlink)){
         tickBlink = TICK_SEC(1);
         PINA = bv(PA1);
       }
-*/      
+*/
     }// tick
   }
 }
@@ -358,14 +422,14 @@ BCD_SendData(digit); }while(0) */
   «акидывает в LED буфер число с выравниванием в право
   ¬озвращает длину числа
  */
-void numToLed(u16 value){
+u8 numToLed(u16 value){
   u8 digit = 0;
-  //u8 len = 1;
+  u8 len = 1;
   u8 flag = ZG_SPACE;
   while(value >= 100){
     value -= 100;
     digit++;
-  //  len = 3;
+    len = 3;
   }
   if(digit){
     flag = 0;
@@ -378,7 +442,7 @@ void numToLed(u16 value){
   while(value >= 10){
     value -= 10;
     digit++;
-  //  len = 2;
+    len = 2;
   }
   if(digit){
     flag = 0;
@@ -388,7 +452,7 @@ void numToLed(u16 value){
   led[LED_COUNT - 2] = digit;
 
   led[LED_COUNT - 1] = value;
-//  return len;
+  return len;
 }
 
 //register u8 ledIndex asm("r7");
@@ -430,9 +494,9 @@ void tDSRead(){
     i16 i;
     u8 u[2];
   } ds;
-  
+
   if(tick && !(--tick)){
-    
+
     u8 err = w1Reset();
     if(err){
       dsErr = err;
@@ -440,7 +504,7 @@ void tDSRead(){
       return;
     }
     if(0 == state){ // запрос на преобразование
-      
+
       w1rw(0xCC);   //SKIP ROM [CCh]
       w1rw(0x44);   //CONVERT  [44h]
       state++;

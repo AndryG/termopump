@@ -25,7 +25,8 @@
 #define S7_SET S7_0, S7_1, S7_2, S7_3, S7_4, S7_5, S7_6, S7_7, S7_8, S7_9, S7_A, S7_b, S7_C, S7_d, S7_E, S7_F, \
         S7_SPACE, S7_MINUS, S7_t, S7_L
 
-#define ZG_SPACE 16
+#define ZG_SPACE 0x10
+#define ZG_d 0xd
 #define ZG_MINUS (ZG_SPACE + 1)
 #define ZG_t (ZG_MINUS + 1)
 #define ZG_L (ZG_t + 1)
