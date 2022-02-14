@@ -56,6 +56,8 @@ u8 edMin, edMax;
 static u8 dsErrCount = 0;
 
 void main(void) __attribute__((noreturn));
+void a3TermoCore();
+void a3ResetDelay();
 u8 tLedAndKey();
 void mcuInit();
 void tDSRead();
@@ -77,7 +79,7 @@ u8 a4Save(u8 state){
   Ќомер вертикали в старшей тетраде. Ќомер состо€ни€ в вертикали - младша€ тетрада
  */
 void a4(){
-  /* младша€ тетрада ноль - признак   
+  /* младша€ тетрада ноль - признак
   */
   static u8 state = 0x1f;
 
@@ -85,7 +87,7 @@ void a4(){
 
   ledBlink = true;
 
-  if(0 == (state & 0x0f)){
+  if(0 == (state & 0xcf)){
     ledBlink = false;
     if(btn & BTN_PLUS){ // пролистывание по горизонтали T / t / Err / clr
       newState += 0x10;
@@ -108,6 +110,7 @@ void a4(){
 
     if(btn & BTN_SET){ // сохранить результат
       newState = a4Save(state);
+      a3ResetDelay(); // сброс задержки, чтобы сразу применить изменени€ настроек
     }
 
   }
@@ -158,7 +161,7 @@ void a4(){
         conf.regErr |= E_CONF_CRC;
       }
       relayOff();
-    case 0x2f: // soft init 
+    case 0x2f: // soft init
       newState =conf.regErr ? 0x30 : 0x10;
       break;
 
@@ -167,24 +170,92 @@ void a4(){
   state = newState;
 }
 
+  static u8 a3State = 0;
+  static u16 a3Tick = 0;
+
+/* —брасывает задержку и начинает новое чтение датчика */
+void a3ResetDelay(){
+  a3Tick = 0;
+  a3State = 0;
+}
+
+  union{
+    u8 a[9];
+    i16 t;
+  } dsData;
 /*
- –абочий автомат режима TERMO
- –елейное управление с гистерезисом.
- «нак гистерезиса назначает режим работы (нагрев/охлаждение), указывает направлени€ изм. температуры градусника при отк. печке/холодильнике.
- ќтрицательный гистерезис дл€ нагревател€, положительный - охладител€.
- ”казываетс€ в дес€тых градуса. –асчеты все ведутс€ в дес€тых градуса
+ јвтомат регулировки
+ –елейное управление с гистерезисом. ”казываетс€ в дес€тых градуса, работает "вниз" от уставки.
  */
 void a3TermoCore(){
-  if(dsErrCount){ // ошибок еще не очень много
-    
+  static u8 crc = 0; // накопитель дл€ подсчета crc
+  static u8 byteCnt = 0; // к-во прочитанных байт
+//  static i16 readValue = 0;
+
+  if(a3Tick){
+    a3Tick -= 1;
+    return;
   }
-  i16 T = conf.t * 10;
-  if(dsValue > T){
-    iopLow(RELAY_PORT, bv(RELAY_BIT));
+
+  u8 tmp = 0; // значение считанного байта или ошибки
+
+  switch(a3State){
+    case 0: // жду, отдыхаю. «апускаю преобразование
+    case 2: // буду читать температуру
+      tmp = w1Reset();
+      if(tmp){
+        goto errLabel;
+      }
+      a3State += 1;
+      break;
+    case 1:
+      w1rw(0xCC);   // SKIP ROM [CCh]
+      w1rw(0x44);   // CONVERT  [44h]
+      a3Tick = TICK_SEC(2);
+      a3State += 1;
+      break;
+    case 3:
+      w1rw(0xCC);  // SKIP ROM [CCh]
+      w1rw(0xBE);  // READ SCRATCHPAD [BEh]
+      byteCnt = 0;
+      crc = 0;
+      a3State += 1;
+      break;
+    case 4:
+      if(byteCnt < 9){ // если счетчик больше нул€, значит мы читаем данные с линии
+        crc = w1CRCUpdate(crc, dsData.a[byteCnt] = w1rw(0xff));
+        byteCnt += 1;        
+      }else if(0 == crc){ // вычитали все байты
+        dsValue = dsData.t * 10 / 16;
+
+        // управление реле
+        i16 T = conf.t * 10;
+        if(dsValue > T){
+          relayOff();
+        }
+        if(dsValue <= T - conf.dt){
+          relayOn();
+        }
+
+        dsErrCount = 0; // очистка счетчика допущенных ошибок
+        goto reDelayLabel;
+      }else{
+        tmp = 0x04; // CRC err code
+        goto errLabel;
+      }
+      break;
+  } // switch
+  return;
+
+errLabel: // обработка ошибок
+  conf.regErr |= tmp;
+  if(dsErrCount && !(-dsErrCount)){ // досчитали счетчик ошибок - выключаем нагрузку и ждем, пока по€в€тс€ верные данные
+    relayOff();
   }
-  if(dsValue <= T - conf.dt){
-    iopHigh(RELAY_PORT, bv(RELAY_BIT));
-  }
+
+reDelayLabel:
+  a3Tick = TICK_SEC(2);
+  a3State = 0;
 }
 
 
@@ -194,6 +265,7 @@ void main(void)
   while (1)
   {
     if(TIFR & (1<<TOV0)){ // tick
+A0High;
 //      PINA = 0x02;
 
       TIFR = (1<<TOV0);
@@ -203,8 +275,9 @@ void main(void)
         secf = TICK_SEC(1);
       }
 
-      tDSRead();
+    //  tDSRead();
       btn = tbtnProcess(tLedAndKey());
+      a3TermoCore(false);
       a4();
       //if(btn & 0x01){ a[0]++;   }
       //if(btn & 0x02){ a[1]++;   }
@@ -213,6 +286,7 @@ void main(void)
       //led[0] = a[0] & 0x0f;
       //led[1] = a[1] & 0x0f;
       //led[2] = a[2] & 0x0f;
+A0Low;
     }// tick
   }
 }
@@ -229,8 +303,7 @@ void mcuInit(){
   iopOutputLow(RELAY_PORT, bv(RELAY_BIT));
   //  sei(); а прерываний нет!
   #ifdef DEBUG
-  iopOutputHigh(PORTA, bv(PA0));
-  iopOutputHigh(PORTA, bv(PA1));
+  iopOutputHigh(PORTA, bv(PA0)|bv(PA1));
   #endif
 }
 
@@ -319,7 +392,6 @@ void tDSRead(){
   } ds;
 
   if(tick && !(--tick)){
-
     u8 err = w1Reset();
     if(err){
       dsErr |= err;
@@ -327,19 +399,16 @@ void tDSRead(){
       return;
     }
     if(0 == state){ // запрос на преобразование
-
       w1rw(0xCC);   //SKIP ROM [CCh]
       w1rw(0x44);   //CONVERT  [44h]
       state++;
       tick = TICK_SEC(2);
     }else{         // 1 чтение и проверка данных
-A0High;
       w1rw(0xCC);  //SKIP ROM [CCh]
       w1rw(0xBE);  //READ SCRATCHPAD [BEh]
 
       u8 crc = 0;
       for(u8 i = 0; i < 9; i++){
-        PINA = 0x01;
         u8 b = w1rw(0xff);
         if(i < 2){
            ds.u[i] = b;
@@ -357,8 +426,8 @@ A0High;
       }
       state = 0;
       tick = TICK_MS(500);
+
     }
-A0Low;
   }
 }
 

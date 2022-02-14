@@ -9,6 +9,14 @@
 #define TICK_MS(n)                (uint16_t)(1e-3 * (n) * F_TICK + 0.5)
 #define TICK_SEC(n)               (uint16_t)( 1.0 * (n) * F_TICK + 0.5)
 
+#ifdef DEBUG
+  #define T_SCRSVR  TICK_SEC(180) // SCReen SaVer
+  #define T_SAVE    TICK_SEC(5) 
+#else
+  #define T_SCRSVR  TICK_SEC(15)
+  #define T_SAVE    TICK_SEC(3)
+#endif
+
 // #define TASK(f, ms)   qtTask(f, (F_TICKS * (ms) / 1000 + 0.5))
 
 #include "ss.lib/lib.h"
@@ -84,13 +92,13 @@
 
 
 #ifdef DEBUG
-  #define A0Low  iopLow(PORTA, bv(PA0)) 
+  #define A0Low  iopLow(PORTA, bv(PA0))
   #define A0High iopHigh(PORTA, bv(PA0))
 #else
   #define A0Low
-  #define a0High
+  #define A0High
 #endif
-    
+
 
 
 
