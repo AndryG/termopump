@@ -10,10 +10,12 @@
 #define TICK_SEC(n)               (uint16_t)( 1.0 * (n) * F_TICK + 0.5)
 
 #ifdef DEBUG
-  #define T_SCRSVR  TICK_SEC(180) // SCReen SaVer
+  #define T_SCRSVR  TICK_SEC(15) // SCReen SaVer
+  #define T_DEFSCR  TICK_SEC(5)
   #define T_SAVE    TICK_SEC(5) 
 #else
-  #define T_SCRSVR  TICK_SEC(15)
+  #define T_SCRSVR  TICK_SEC(180)
+  #define T_DEFSCR  TICK_SEC(15)
   #define T_SAVE    TICK_SEC(3)
 #endif
 
