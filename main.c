@@ -3,7 +3,7 @@ const u8 PROGMEM ledZ[] = {LED_Z_SET};
 #define LED_COUNT (sizeof(ledZ))
 
 /* видеопамять */
-char led[LED_COUNT] = {ZG_SPACE, ZG_MINUS, ZG_SPACE};
+char led[LED_COUNT] = {ZG_SPACE, ZG_SPACE, ZG_SPACE};
 
 /* флаг моргания индикатора */
 bool ledBlink;
@@ -16,12 +16,11 @@ u8 secf; // доли секунды register -10
 struct conf_s {
   u8 t;      // температурная уставка
   u8 dt;     // гистерезис температуры /-12.0 - 12.0/ в десятых градуса >0 режим охлаждения, <0 режим нагревателя
-  u8 light;  // яркость индикатора
   u8 crc;    // для контроля данных в ееп
 };
 
 // параметры по умолчанию в случае беды с eep
-#define CONF_DEFAULT 9, 5, 12
+#define CONF_DEFAULT 9, 5
 
 struct conf_s const PROGMEM conf_p = {CONF_DEFAULT};
 
@@ -30,7 +29,7 @@ struct conf_s EEMEM conf_e = {CONF_DEFAULT, 166};
 
 struct conf_s conf;
 
-u8 regErr = 0;
+u8 regErr;
 #define E_DS_CRC    0x04
 #define E_CONF_CRC  0x10 // ошибка чтения настроек из eep
 
@@ -44,13 +43,13 @@ u8 btn;//  asm("r3");
   * При обнулении счетчика отключается реле, регистрируется ошибка "много ошибок чтения", регулировка не проводится
   * Изначально счетчик пустой - регулировка не будет проводится, но регистрации ошибок не будет (нет момента перехода в ноль).
   */
-u8 dsErrCount = 0;
+u8 dsErrCount;
 
 /* К-во попыток чтения датчика до отключения выхода */
 #define DS_ERR_COUNT 6
 
 void main(void) __attribute__((noreturn));
-void a3();
+bool a3();
 void a3ResetDelay();
 bool a5ShowErr();
 u8 tLedAndKey();
@@ -61,6 +60,34 @@ u8 w1CRCBuf(void* buf, u8 len, u8 crc);
 void numToLed(u16 value);
 void relayOn();
 void relayOff();
+
+#ifdef USE_TX_LOG
+
+void put(u8 b){
+  while(0 == (UCSRA & bv(UDRE)));
+  UDR = b;
+}
+
+void putLed(){
+  for(u8 i = 0; i < 3; i++){
+    if(led[i] < 10){
+      put(led[i] + '0');
+    }
+  }
+  put(' ');
+}
+
+void transmitLog(){
+  numToLed(dsValue);  putLed();
+  numToLed(conf.t);   putLed();
+  numToLed(conf.dt);  putLed();
+  numToLed(regErr);   putLed();
+  numToLed(dsErrCount);putLed();
+  put(iopBit(RELAY_PORT, RELAY_BIT) ? '1' : '0');
+  put('\r');put('\n');
+}
+#endif
+
 
 bool a5ShowErr(){
   if(regErr){
@@ -123,15 +150,15 @@ void a5(){
     a5Timer--;
   }
 
+  ledBlink = 0 == dsErrCount;
+
   if(a5ShowErr()){
     return;
   }
 
-  ledBlink = 0 == dsErrCount;
-
   if(dsErrCount && 0 == a5Timer){
     if(a5Sht){
-      led[0] = ZG_SPACE; led[1] = ZG_MINUS; led[2] = ZG_SPACE; // screensaver
+      led[0] = led[1] = led[2] = ZG_SPACE; // screensaver
       return;
     }else{
       a5Sht = true; // истек таймер, переходим на показ уставки
@@ -183,11 +210,11 @@ u8 a3ByteCnt = 0; // к-во прочитанных байт
  Автомат регулировки
  Релейное управление с гистерезисом. Указывается в десятых градуса, работает "вниз" от уставки.
  */
-void a3(){
+bool a3(){
 
   if(a3Tick){
     a3Tick -= 1;
-    return;
+    return false;
   }
 
   u8 newErr = 0; // код ошибки для регистрации
@@ -200,22 +227,22 @@ void a3(){
         goto errLabel;
       }
       a3State += 1;
-      return;
+      return false;;
     case 1:
       w1rw(0xCC);   // SKIP ROM [CCh]
       w1rw(0x44);   // CONVERT  [44h]
       a3Tick = TICK_SEC(2); // задержка на преобразование
       a3State += 1;
-      return;
+      return false;;
     case 3:
       w1rw(0xCC);  // SKIP ROM [CCh]
       w1rw(0xBE);  // READ SCRATCHPAD [BEh]
       a3ByteCnt = 0;
       a3State += 1;
-      return;
+      return false;;
     case 4:
       if(a3ByteCnt < 9){ // если счетчик больше нуля, значит мы читаем данные с линии
-        dsData.a[a3ByteCnt++] = w1rw(0xff);        
+        dsData.a[a3ByteCnt++] = w1rw(0xff);
       }else if(0 == w1CRCBuf(&dsData, 9, 0)){ // вычитали все байты
         dsValue = dsData.t * 10 / 16;
 
@@ -234,9 +261,9 @@ void a3(){
         newErr = E_DS_CRC; // CRC err code
         goto errLabel;
       }
-      return;
+      return false;
   } // switch
-  return;
+  return false;
 
 errLabel: // обработка ошибок
   regErr |= newErr;
@@ -245,8 +272,9 @@ errLabel: // обработка ошибок
   }
 
 reDelayLabel:
-  a3Tick = TICK_SEC(2);
+  a3Tick = T_ADJUSTMENT;
   a3State = 0;
+  return true;
 }
 
 void main(void)
@@ -265,11 +293,11 @@ void main(void)
       TIFR = (1<<TOV0);
       TCNT0 = 0xff + 1 - F_CPU / 256 / F_TICK; // 0x64
 
-      if(0 == --secf){
-        secf = TICK_SEC(1);
-      }
-
       btn = tbtnProcess(tLedAndKey());
+
+      if(0 == --secf){
+        secf = TICK_SEC(1); // blink
+      }
 
       if(bootTick){
         bootTick -= 1;
@@ -277,10 +305,14 @@ void main(void)
           setupMode = btn & (BTN_SET << 4);
         }
       }else if(setupMode){
-        a6(); //1720
+        a6();
       }else{
-        a3();
-        a5();  //1546
+        if(a3()){
+          #ifdef USE_TX_LOG
+          transmitLog();
+          #endif
+        }
+        a5();
       }
     }// tick
   }
@@ -289,7 +321,6 @@ void main(void)
 /* инициализация железа */
 void mcuInit(){
   // ticks init
-  //TIMSK = (1 << TOIE0);
   TCNT0 = 0xff;
   TCCR0B = (1 << CS02) | (0 << CS01) | (0 << CS00);
   // led init
@@ -299,6 +330,12 @@ void mcuInit(){
   //  sei(); а прерываний нет!
   #ifdef DEBUG
   iopOutputHigh(PORTA, bv(PA0)|bv(PA1));
+  #endif
+
+  #ifdef USE_TX_LOG
+  UBRRH = UBRRH_VALUE;
+  UBRRL = UBRRL_VALUE;
+  UCSRB = (1<<TXEN);
   #endif
 }
 
@@ -539,7 +576,6 @@ bool a0Boot(){
       dsValue = dsValue * 10 / 16; //  932 вариант с отрицательной темп. в десятых градуса
       //  val = val / 16; //  892  с отрицательной темп. в целых градуса  САМЫЙ ЭКОНОМ ПО РАЗМЕРУ
       //  val = val < 0 ? 0 : buf.i >> 4; //  898  В целых градуса без отрицательных
-
-
-
 */
+
+//c:\service\avrdude\avrdude.exe -p t2313 -c usbasp -P usb -V -D -U flash:w:"D:\mcu\termopump\Debug\termopump.hex":i -qq

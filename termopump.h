@@ -12,21 +12,25 @@
 #ifdef DEBUG
   #define T_SCRSVR  TICK_SEC(15) // SCReen SaVer
   #define T_DEFSCR  TICK_SEC(5)
+  #define T_ADJUSTMENT TICK_SEC(3)
   #define T_SAVE    TICK_SEC(5) 
 #else
   #define T_SCRSVR  TICK_SEC(180)
   #define T_DEFSCR  TICK_SEC(15)
-  #define T_SAVE    TICK_SEC(3)
+  #define T_ADJUSTMENT TICK_SEC(600)  
+  #define T_SAVE    TICK_SEC(5)
 #endif
 
-// #define TASK(f, ms)   qtTask(f, (F_TICKS * (ms) / 1000 + 0.5))
+ #define USE_TX_LOG
+
+#define BAUD 9600
 
 #include "ss.lib/lib.h"
 #include <util/delay.h>
 #include <avr/eeprom.h>
 #include <avr/builtins.h>
 #include <avr/wdt.h>
-
+#include <util/setbaud.h>
 
 #define QT_TASK_COUNT 5
 
@@ -73,7 +77,7 @@
 
 #define TBTN_DELAY_A      TICK_MS(750)
 
-#define TBTN_DELAY_B      TICK_MS(175)
+#define TBTN_DELAY_B      TICK_MS(275)
 
 #define RELAY_PORT  PORTD
 #define RELAY_BIT   PD2
@@ -100,8 +104,6 @@
   #define A0Low
   #define A0High
 #endif
-
-
 
 
 
