@@ -1,9 +1,9 @@
-#pragma once
+п»ї#pragma once
 
-// Конфиг библиотек. Вместо подключения параметров через -D в строке параметров. Этот файл подключен в проект через -include
+// РљРѕРЅС„РёРі Р±РёР±Р»РёРѕС‚РµРє. Р’РјРµСЃС‚Рѕ РїРѕРґРєР»СЋС‡РµРЅРёСЏ РїР°СЂР°РјРµС‚СЂРѕРІ С‡РµСЂРµР· -D РІ СЃС‚СЂРѕРєРµ РїР°СЂР°РјРµС‚СЂРѕРІ. Р­С‚РѕС‚ С„Р°Р№Р» РїРѕРґРєР»СЋС‡РµРЅ РІ РїСЂРѕРµРєС‚ С‡РµСЂРµР· -include
 
 #define F_CPU  8000000u
-#define F_TICK 250uL     // частота системных тиков
+#define F_TICK 250uL     // С‡Р°СЃС‚РѕС‚Р° СЃРёСЃС‚РµРјРЅС‹С… С‚РёРєРѕРІ
 
 #define TICK_US(n)                (uint16_t)(1e-6 * (n) * F_TICK + 0.5)
 #define TICK_MS(n)                (uint16_t)(1e-3 * (n) * F_TICK + 0.5)
@@ -25,7 +25,8 @@
 
 #define BAUD 9600
 
-#include "ss.lib/lib.h"
+#include "ss.lib/avr-ss.h"
+#include "ss.lib/func.h"
 #include <util/delay.h>
 #include <avr/eeprom.h>
 #include <avr/builtins.h>
@@ -54,25 +55,25 @@
 #define S7_SEG_G 1
 #define S7_SEG_P 3
 
-// порт разрядов индикатора
+// РїРѕСЂС‚ СЂР°Р·СЂСЏРґРѕРІ РёРЅРґРёРєР°С‚РѕСЂР°
 #define LED_Z_PORT PORTD
-// порязрядные маски пинов для массива (будет вставлено в массив const u8 PROGMEM ledZ[] = {LED_Z_SET}; )
+// РїРѕСЂСЏР·СЂСЏРґРЅС‹Рµ РјР°СЃРєРё РїРёРЅРѕРІ РґР»СЏ РјР°СЃСЃРёРІР° (Р±СѓРґРµС‚ РІСЃС‚Р°РІР»РµРЅРѕ РІ РјР°СЃСЃРёРІ const u8 PROGMEM ledZ[] = {LED_Z_SET}; )
 #define LED_Z_SET  bv(PD6), bv(PD4), bv(PD5)
-// маска для всех пинов
+// РјР°СЃРєР° РґР»СЏ РІСЃРµС… РїРёРЅРѕРІ
 #define LED_Z_MASK (bv(PD6)|bv(PD4)|bv(PD5))
 
-// порт сегментов индикатора (тут же и кнопки)
+// РїРѕСЂС‚ СЃРµРіРјРµРЅС‚РѕРІ РёРЅРґРёРєР°С‚РѕСЂР° (С‚СѓС‚ Р¶Рµ Рё РєРЅРѕРїРєРё)
 #define LED_SEG_PORT PORTB
 
-// пины чтения кнопок
+// РїРёРЅС‹ С‡С‚РµРЅРёСЏ РєРЅРѕРїРѕРє
 #define LED_BT_PIN_MASK 0x07
-// общее заземление кнопок (маска пина)
+// РѕР±С‰РµРµ Р·Р°Р·РµРјР»РµРЅРёРµ РєРЅРѕРїРѕРє (РјР°СЃРєР° РїРёРЅР°)
 #define LED_BT_COMMON_MASK 0x80
 
 #define BTN_SET   TBTN_1
 #define BTN_MINUS TBTN_2
 #define BTN_PLUS  TBTN_0
-// биты кнопок с автоповтором
+// Р±РёС‚С‹ РєРЅРѕРїРѕРє СЃ Р°РІС‚РѕРїРѕРІС‚РѕСЂРѕРј
 #define TBTN_REPEATE_MASK BTN_PLUS|BTN_MINUS
 
 #define TBTN_DELAY_A      TICK_MS(750)
