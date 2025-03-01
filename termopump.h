@@ -13,15 +13,20 @@
   #define T_SCRSVR  TICK_SEC(15) // SCReen SaVer
   #define T_DEFSCR  TICK_SEC(5)
   #define T_ADJUSTMENT TICK_SEC(3)
-  #define T_SAVE    TICK_SEC(5) 
+  #define T_SAVE    TICK_SEC(5)
 #else
   #define T_SCRSVR  TICK_SEC(180)
   #define T_DEFSCR  TICK_SEC(15)
-  #define T_ADJUSTMENT TICK_SEC(600)  
+  #define T_ADJUSTMENT TICK_SEC(600)
   #define T_SAVE    TICK_SEC(5)
 #endif
 
- #define USE_TX_LOG
+// #define USE_TX_LOG
+
+#define EXECUTER_MODE_HEATER 1  // реле вмикається, коли стає холодніше уставки
+#define EXECUTER_MODE_COOLER 2  // реле вмикається, коли стає тепліше уставки
+
+#define EXECUTER_MODE EXECUTER_MODE_COOLER
 
 #define BAUD 9600
 
@@ -105,6 +110,4 @@
   #define A0Low
   #define A0High
 #endif
-
-
 

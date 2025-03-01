@@ -247,12 +247,24 @@ bool a3(){
 
         // управление реле
         i16 T = conf.t * 10;
-        if(dsValue > T){
+        
+#if EXECUTER_MODE == EXECUTER_MODE_HEATER
+        if(dsValue >= T + conf.dt){
           relayOff();
         }
-        if(dsValue <= T - conf.dt){
+        if(dsValue < T){
           relayOn();
         }
+#elif EXECUTER_MODE == EXECUTER_MODE_COOLER
+        if(dsValue > T + conf.dt){
+            relayOn();
+        }
+        if(dsValue <= T){
+            relayOff();
+        }
+#else
+    #error EXECUTER_MODE need define EXECUTER_MODE_HEATER or EXECUTER_MODE_COOLER
+#endif        
 
         dsErrCount = DS_ERR_COUNT; // перезапуск счетчика допущенных ошибок
         goto reDelayLabel;
