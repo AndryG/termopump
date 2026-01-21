@@ -10,18 +10,18 @@
 #define TICK_SEC(n)               (uint16_t)( 1.0 * (n) * F_TICK + 0.5)
 
 #ifdef DEBUG
-  #define T_SCRSVR  TICK_SEC(15) // SCReen SaVer
-  #define T_DEFSCR  TICK_SEC(5)
-  #define T_ADJUSTMENT TICK_SEC(3)
+  #define T_SCRSVR  TICK_SEC(3) // SCReen SaVer
+  #define T_DEFSCR  TICK_SEC(3)
+  #define T_ADJUSTMENT TICK_SEC(15)
   #define T_SAVE    TICK_SEC(5)
 #else
-  #define T_SCRSVR  TICK_SEC(180)
+  #define T_SCRSVR  TICK_SEC(60)
   #define T_DEFSCR  TICK_SEC(15)
   #define T_ADJUSTMENT TICK_SEC(600)
   #define T_SAVE    TICK_SEC(5)
 #endif
 
-// #define USE_TX_LOG
+ //#define USE_TX_LOG
 
 #define EXECUTER_MODE_HEATER 1  // реле вмикається, коли стає холодніше уставки
 #define EXECUTER_MODE_COOLER 2  // реле вмикається, коли стає тепліше уставки
@@ -39,8 +39,6 @@
 #include <util/setbaud.h>
 
 #define QT_TASK_COUNT 5
-
-#include "ss.lib/queuetask.h"
 
 #define S7_SET S7_0, S7_1, S7_2, S7_3, S7_4, S7_5, S7_6, S7_7, S7_8, S7_9, S7_A, S7_b, S7_C, S7_d, S7_E, S7_F, \
         S7_SPACE, S7_MINUS, S7_t, S7_L

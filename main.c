@@ -13,25 +13,31 @@ u8 secf; // доли секунды register -10
 
 // char buf[12];
 
-struct conf_s {
-  u8 t;      // температурная уставка
-  u8 dt;     // гистерезис температуры /-12.0 - 12.0/ в десятых градуса >0 режим охлаждения, <0 режим нагревателя
-  u8 crc;    // для контроля данных в ееп
+typedef union {
+    struct {
+        u8 t;      // температурная уставка
+        u8 dt;     // гистерезис температуры в десятых градуса
+        u8 crc;    // для контроля данных в ееп
+    };
+    u8 bytes[3];   // "байтове представлення" структури
+} conf_t;
+
+// структура настроек в eep — вся заповнена 0x45
+conf_t EEMEM conf_e = {
+    .bytes = { [0 ... sizeof(((conf_t*)0)->bytes) - 1] = 0x45 }
 };
 
-// параметры по умолчанию в случае беды с eep
-#define CONF_DEFAULT 9, 5
-
-struct conf_s const PROGMEM conf_p = {CONF_DEFAULT};
-
-// структура настроек в eep
-struct conf_s EEMEM conf_e = {CONF_DEFAULT, 166};
-
-struct conf_s conf;
+conf_t conf;
 
 u8 regErr;
-#define E_DS_CRC    0x04
-#define E_CONF_CRC  0x10 // ошибка чтения настроек из eep
+#define E_DS_NO     0x01 // датчика нема або обрив лінії
+#define E_DS_SC     0x02 // лінія замкнута
+#define E_DS_CRC    0x04 // помилка контрольної суми
+#define E_DS_MANY   0x08 // помилка контрольної суми
+#define E_CONF_DT   0x10 // ошибка не установлен гистерезис температуры
+#define E_CONF_CRC  0x20 // ошибка не устанвлен конфиг
+
+#define  E_FATAL (E_DS_MANY | E_CONF_CRC | E_CONF_DT)
 
 //register i16 dsValue asm("r4");  -28 байт
 i16 dsValue;
@@ -45,11 +51,11 @@ u8 btn;//  asm("r3");
   */
 u8 dsErrCount;
 
-/* К-во попыток чтения датчика до отключения выхода */
+/* К-во попыток чтения датчика (подряд) до отключения выхода */
 #define DS_ERR_COUNT 6
 
 void main(void) __attribute__((noreturn));
-bool a3();
+u8 a3();
 void a3ResetDelay();
 bool a5ShowErr();
 u8 tLedAndKey();
@@ -101,7 +107,7 @@ bool a5ShowErr(){
   return false;
 }
 
-bool a6Changed = false;
+//bool a6Changed = false;
 
 /* Интерфейс настройки параметров*/
 void a6(){
@@ -130,6 +136,104 @@ void a6(){
   led[0] = ZG_d;
 }
 
+u16 a7Timer = T_SCRSVR;
+
+enum {sleep = 0, showT=1, setT=2, showErr=3}  a7State = showT;
+
+const u8 a7BtnSet[] PROGMEM = {showT, setT, showT, showT};
+        
+void a7(u8 err){
+             
+    u8 b = btn; 
+
+    ledBlink = regErr & E_FATAL;
+    
+    if(err & 0x7F){// && sleep == a7State){ // Маска ошибок
+        a7State = showErr;  
+        a7Timer = T_DEFSCR;
+    }
+        
+    if(a7Timer && !(--a7Timer)){
+        if(setT == a7State){
+            a7State = showT;
+            a7Timer = T_DEFSCR;
+        }else{
+            a7State = sleep;
+        }
+    }
+    
+    if(b & 0x0f){
+        //b = btn;
+        a7Timer = T_DEFSCR;        
+        if(b & BTN_SET){
+            u8 prevErr;
+            switch(a7State){
+                case sleep:
+                    a7State = regErr ? showErr :showT;
+                    break;
+                case showErr:
+                    prevErr = regErr;
+                    regErr &= ~0x07;
+                    if((regErr != prevErr) && regErr){
+                       a7State = showErr;
+                       break;
+                    }
+                    a7State = (regErr & E_DS_MANY) ? setT : showT;
+                    break;
+                case showT:
+                    a7State = setT;
+                    break;
+                case setT:
+                    a7State = regErr ? showErr : showT;
+                    break;
+            }                   
+/*            if(showErr == a7State){
+                u8 prevErr = regErr;
+                regErr &= ~0x07;
+                a7State = (regErr == prevErr) | !regErr ? showT : showErr;
+            }else if(sleep == a7State){
+                a7State = regErr ? showErr :showT;
+            }else if(showT == a7State){
+                a7State = setT;
+            }else{
+              a7State = showT;  
+            }*/
+        }else if(setT == a7State){
+            u8 d = 0;
+            if(b & BTN_PLUS && conf.t < 30){
+                d = 1;
+            }
+            if(b & BTN_MINUS && conf.t > 0){
+                d -= 1;
+            }
+            if(d){
+                conf.t += d;
+                saveConf();
+                a3ResetDelay();
+            }
+        }
+        btn = 0;
+    }
+                   
+    switch(a7State){
+        case sleep: // sleep
+            led[0] = led[1] = led[2] = ZG_SPACE; // screensaver
+            break;
+        case setT:
+            numToLed(conf.t);
+            led[0] = ZG_t;
+            break;
+        case showT:
+            numToLed(dsValue);
+            break;
+       case showErr:
+                led[0] = 0x0E;
+                led[1] = regErr >> 4;
+                led[2] = regErr & 0x0f;
+            break;
+    }
+} 
+
 u16 a5Timer= T_SCRSVR;
 
 bool a5Sht = true; // show t / show T
@@ -145,7 +249,7 @@ void a5(){
     if(b & BTN_SET){
       a5Timer = a5Sht ? T_SCRSVR : T_DEFSCR;
     }
-    }else if(a5Timer){
+  }else if(a5Timer){
     a5Timer--;
   }
 
@@ -206,16 +310,18 @@ union{
 u8 a3ByteCnt = 0; // к-во прочитанных байт
 
 /*
- Автомат регулировки
- Релейное управление с гистерезисом. Указывается в десятых градуса, работает "вниз" от уставки.
+ Автомат чтения сенсора
+   @return u8
+     0 - цикл чтения не закончен
+     0х80  - все ОК
+     иначе - код ошибки (младший нибл)
  */
-bool a3(){
+u8 a3(){
 
   if(a3Tick){
     a3Tick -= 1;
-    return false;
+    return 0;
   }
-
   u8 newErr = 0; // код ошибки для регистрации
 
   switch(a3State){
@@ -226,66 +332,96 @@ bool a3(){
         goto errLabel;
       }
       a3State += 1;
-      return false;;
+      return 0;
     case 1:
       w1rw(0xCC);   // SKIP ROM [CCh]
       w1rw(0x44);   // CONVERT  [44h]
-      a3Tick = TICK_SEC(2); // задержка на преобразование
+      a3Tick = TICK_SEC(3); // задержка на преобразование
       a3State += 1;
-      return false;;
+      return 0;
     case 3:
       w1rw(0xCC);  // SKIP ROM [CCh]
       w1rw(0xBE);  // READ SCRATCHPAD [BEh]
       a3ByteCnt = 0;
       a3State += 1;
-      return false;;
-    case 4:
+      return 0;
+    case 4:   // попробовать переделать на 4+9 состояний (для каждого байта)
       if(a3ByteCnt < 9){ // если счетчик больше нуля, значит мы читаем данные с линии
         dsData.a[a3ByteCnt++] = w1rw(0xff);
+        return 0;
       }else if(0 == w1CRCBuf(&dsData, 9, 0)){ // вычитали все байты
         dsValue = dsData.t * 10 / 16;
-
-        // управление реле
-        i16 T = conf.t * 10;
-        
-#if EXECUTER_MODE == EXECUTER_MODE_HEATER
-        if(dsValue >= T + conf.dt){
-          relayOff();
-        }
-        if(dsValue < T){
-          relayOn();
-        }
-#elif EXECUTER_MODE == EXECUTER_MODE_COOLER
-        if(dsValue > T + conf.dt){
-            relayOn();
-        }
-        if(dsValue <= T){
-            relayOff();
-        }
-#else
-    #error EXECUTER_MODE need define EXECUTER_MODE_HEATER or EXECUTER_MODE_COOLER
-#endif        
-
-        dsErrCount = DS_ERR_COUNT; // перезапуск счетчика допущенных ошибок
-        goto reDelayLabel;
+        newErr = 0x80; // NO ERROR
       }else{
         newErr = E_DS_CRC; // CRC err code
-        goto errLabel;
       }
-      return false;
+      goto errLabel;
   } // switch
-  return false;
 
-errLabel: // обработка ошибок
-  regErr |= newErr;
-  if(!dsErrCount || !(--dsErrCount)){// досчитали счетчик ошибок - выключаем нагрузку и ждем, пока появятся верные данные
-    relayOff();
-  }
-
-reDelayLabel:
+errLabel: // ошибка - попытка провалена, ждем следующую
   a3Tick = T_ADJUSTMENT;
   a3State = 0;
-  return true;
+  return newErr;
+}
+
+/*
+  Регулировка температуры.  Вызывается после считывания сенсора
+  Если набралось много ошибок сенсора или есть ошибки настроек - управление выключается
+  Ведет подсчет неудачных попыток считывания сенсора
+*/
+bool a4(u8 sensorErr)
+{
+    /*
+      Накопитель ошибок сенсора.
+      Если ошибок много подряд, то поднимается флаг E_DS_MANY
+      Если ошибок нет, то флаг сбрасывается
+    */
+    
+    if(0x80 == sensorErr){
+        regErr &= ~E_DS_MANY;
+        dsErrCount = DS_ERR_COUNT;
+    }else {
+        regErr |= sensorErr;
+        if(sensorErr & 0x0F && dsErrCount && !(--dsErrCount)){ // якщо помилка і лічильник не пустий і він став пустим
+            regErr |= E_DS_MANY;
+        }            
+    }
+    
+    if(0 == conf.dt){
+        regErr |= E_CONF_DT;
+    }
+    
+    #ifdef USE_TX_LOG
+    //u8 releOld = RELAY_PORT & bv(RELAY_BIT);
+    #endif
+        
+    if(regErr & (E_DS_MANY | E_CONF_CRC | E_CONF_DT)){ // критична помилка
+        relayOff();
+    } else { // помилок нема - керуємо реле
+        i16 T = conf.t * 10;
+        #if EXECUTER_MODE == EXECUTER_MODE_HEATER
+            if(dsValue >= T + conf.dt){
+                relayOff();
+            }
+            if(dsValue < T){
+                relayOn();
+            }
+        #elif EXECUTER_MODE == EXECUTER_MODE_COOLER
+            if(dsValue > T + conf.dt){
+                relayOn();
+            }
+            if(dsValue <= T){
+                relayOff();
+            }
+        #else
+            #error EXECUTER_MODE need define EXECUTER_MODE_HEATER or EXECUTER_MODE_COOLER
+        #endif
+        
+        #ifdef USE_TX_LOG
+        //    return  (RELAY_PORT & bv(RELAY_BIT)) != releOld;
+        #endif        
+    }
+    return true;
 }
 
 void main(void)
@@ -305,6 +441,8 @@ void main(void)
       TCNT0 = 0xff + 1 - F_CPU / 256 / F_TICK; // 0x64
 
       btn = tbtnProcess(tLedAndKey());
+      
+      u8 res = 0;
 
       if(0 == --secf){
         secf = TICK_SEC(1); // blink
@@ -317,14 +455,18 @@ void main(void)
         }
       }else if(setupMode){
         a6();
-      }else{
-        if(a3()){
-          #ifdef USE_TX_LOG
-          transmitLog();
-          #endif
-        }
-        a5();
-      }
+      }else if(setT != a7State){
+          res = a3();
+          if(res){
+              if(a4(res)){
+                #ifdef USE_TX_LOG
+                transmitLog();
+                #endif
+              }
+          }          
+      }  
+//       numToLed(dsValue);        
+      a7(res);
     }// tick
   }
 }
@@ -414,36 +556,30 @@ u8 tLedAndKey(){
   return b;
 }
 
-/* загрузка conf с eep, проверка, загрузка правильного варианта с прошивки в случае ошибки
-2  @return true - загрузка успешна, false - были загружены параметры по умолчанию
+/* загрузка conf с eep, проверка, останов в случае ошибки
+   @return true - загрузка успешна, false - параметры не загружены
 */
 bool loadConf(){
-  // читаем ееп, проверяем crc, если не совпало, то перечитываем с прошивки
-  eeprom_read_block(&conf, &conf_e, sizeof(struct conf_s));
-/*  u8* p = (u8*)&conf;
+  // читаем ееп, проверяем crc
+  eeprom_read_block(&conf, &conf_e, sizeof(conf_t));
+  /* u8* p = (u8*)&conf;
   EEAR = (uintptr_t)(&conf_e);
-  for(u8 i = sizeof(struct conf_s); i > 0; i--){
+  for(u8 i = sizeof(conf_t); i > 0; i--){
     while (EECR & (1<<EEPE));
     EECR |= (1<<EERE);
     *p++ = EEDR;
     EEAR += 1;
   }*/
 
-  if(w1CRCBuf(&conf, sizeof(struct conf_s), 7)){ // ошибка - читаем с прошивки conf по умолчанию. В eep не пишем, чтобы каждый раз напоминать, что conf битый
-    //memcpy_P(&conf, &conf_p, sizeof(struct conf_s)); // 1392
-    u8* r = (u8*)&conf;
-    u8* p = (u8*)&conf_p;
-    for(u8 i = sizeof(struct conf_s); i > 0; i--){
-      *(r++) = pgm_read_byte(p++);
-    }
+  if(w1CRCBuf(&conf, sizeof(conf_t), 7)){
     return false;
   }
   return true;
 }
 
 void saveConf(){
-  conf.crc = w1CRCBuf(& conf, sizeof(struct conf_s) - 1, 7);
-  eeprom_write_block(&conf, &conf_e, sizeof(struct conf_s));
+  conf.crc = w1CRCBuf(& conf, sizeof(conf_t) - 1, 7);
+  eeprom_write_block(&conf, &conf_e, sizeof(conf_t));
 }
 
 inline void relayOn(){
